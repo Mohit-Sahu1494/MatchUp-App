@@ -20,9 +20,12 @@ class WebRTCService {
   String? currentCallType; // 'audio' or 'video'
 
   Function(CallState)? onCallStateChanged;
+
+  /// Called when an incoming call arrives.
+  /// Payload: { callerId, callerName, callerPhoto, callType, offer }
   Function(Map<String, dynamic>)? onIncomingCall;
 
-  // Standard public Google STUN servers (TURN credentials can be injected via env)
+  // Standard public Google STUN servers
   final Map<String, dynamic> _iceServers = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
@@ -31,6 +34,8 @@ class WebRTCService {
     ]
   };
 
+  bool _listenersRegistered = false;
+
   Future<void> initRenderers() async {
     await localRenderer.initialize();
     await remoteRenderer.initialize();
@@ -38,20 +43,26 @@ class WebRTCService {
   }
 
   void _setupSocketListeners() {
-    // Incoming call event
+    if (_listenersRegistered) return;
+    _listenersRegistered = true;
+
+    // Incoming call event — notify UI to show accept/reject dialog
     _socket.on('incoming_call', (data) {
       if (onIncomingCall != null) {
         onIncomingCall!(Map<String, dynamic>.from(data));
       }
+      onCallStateChanged?.call(CallState.incoming);
     });
 
-    // Receiver accepted call -> set remote description
+    // Receiver accepted call → set remote SDP answer
     _socket.on('call_accepted', (data) async {
       final answer = data['answer'];
-      await _peerConnection?.setRemoteDescription(
-        RTCSessionDescription(answer['sdp'], answer['type']),
-      );
-      onCallStateChanged?.call(CallState.connected);
+      if (answer != null && _peerConnection != null) {
+        await _peerConnection?.setRemoteDescription(
+          RTCSessionDescription(answer['sdp'], answer['type']),
+        );
+        onCallStateChanged?.call(CallState.connected);
+      }
     });
 
     // Call rejected or ended
@@ -62,13 +73,22 @@ class WebRTCService {
     _socket.on('ice_candidate', (data) async {
       final candidateData = data['candidate'];
       if (candidateData != null && _peerConnection != null) {
-        final candidate = RTCIceCandidate(
-          candidateData['candidate'],
-          candidateData['sdpMid'],
-          candidateData['sdpMLineIndex'],
-        );
-        await _peerConnection!.addCandidate(candidate);
+        try {
+          final candidate = RTCIceCandidate(
+            candidateData['candidate'],
+            candidateData['sdpMid'],
+            candidateData['sdpMLineIndex'],
+          );
+          await _peerConnection!.addCandidate(candidate);
+        } catch (e) {
+          // Ignore stale ICE candidates
+        }
       }
+    });
+
+    // Peer muted/video toggled
+    _socket.on('peer_media_state_changed', (data) {
+      // Can be exposed via a notifier if needed in UI
     });
   }
 
@@ -82,7 +102,6 @@ class WebRTCService {
     final offer = await _peerConnection!.createOffer();
     await _peerConnection!.setLocalDescription(offer);
 
-    // Dispatch signaling offer via Socket.IO
     _socket.emit('call_user', {
       'targetUserId': targetUserId,
       'callType': currentCallType,
@@ -92,7 +111,11 @@ class WebRTCService {
     onCallStateChanged?.call(CallState.outgoing);
   }
 
-  Future<void> acceptCall(String callerId, Map<String, dynamic> offerData, {bool isVideo = true}) async {
+  Future<void> acceptCall(
+    String callerId,
+    Map<String, dynamic> offerData, {
+    bool isVideo = true,
+  }) async {
     currentTargetUserId = callerId;
     currentCallType = isVideo ? 'video' : 'audio';
 
@@ -106,7 +129,6 @@ class WebRTCService {
     final answer = await _peerConnection!.createAnswer();
     await _peerConnection!.setLocalDescription(answer);
 
-    // Dispatch answer via Socket.IO
     _socket.emit('accept_call', {
       'callerId': callerId,
       'answer': {'sdp': answer.sdp, 'type': answer.type},
@@ -133,6 +155,13 @@ class WebRTCService {
       if (audioTrack != null) {
         isMuted = !isMuted;
         audioTrack.enabled = !isMuted;
+        if (currentTargetUserId != null) {
+          _socket.emit('media_state_toggle', {
+            'targetUserId': currentTargetUserId,
+            'isMuted': isMuted,
+            'isVideoOff': isVideoOff,
+          });
+        }
       }
     }
   }
@@ -143,6 +172,13 @@ class WebRTCService {
       if (videoTrack != null) {
         isVideoOff = !isVideoOff;
         videoTrack.enabled = !isVideoOff;
+        if (currentTargetUserId != null) {
+          _socket.emit('media_state_toggle', {
+            'targetUserId': currentTargetUserId,
+            'isMuted': isMuted,
+            'isVideoOff': isVideoOff,
+          });
+        }
       }
     }
   }
@@ -167,7 +203,7 @@ class WebRTCService {
     _peerConnection = await createPeerConnection(_iceServers);
 
     _peerConnection!.onIceCandidate = (candidate) {
-      if (currentTargetUserId != null) {
+      if (currentTargetUserId != null && candidate.candidate != null) {
         _socket.emit('ice_candidate', {
           'targetUserId': currentTargetUserId,
           'candidate': {
@@ -185,15 +221,27 @@ class WebRTCService {
         remoteRenderer.srcObject = _remoteStream;
       }
     };
+
+    _peerConnection!.onConnectionState = (state) {
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        onCallStateChanged?.call(CallState.connected);
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        _handleCallEnd();
+      }
+    };
   }
 
   Future<void> _getUserMedia(bool isVideo) async {
     final mediaConstraints = <String, dynamic>{
       'audio': true,
-      'video': isVideo ? {'facingMode': 'user', 'width': 1280, 'height': 720} : false,
+      'video': isVideo
+          ? {'facingMode': 'user', 'width': 1280, 'height': 720}
+          : false,
     };
 
-    _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    _localStream =
+        await navigator.mediaDevices.getUserMedia(mediaConstraints);
     localRenderer.srcObject = _localStream;
 
     _localStream!.getTracks().forEach((track) {
@@ -208,6 +256,8 @@ class WebRTCService {
     _remoteStream?.dispose();
     _peerConnection?.close();
     _peerConnection = null;
+    _localStream = null;
+    _remoteStream = null;
 
     localRenderer.srcObject = null;
     remoteRenderer.srcObject = null;

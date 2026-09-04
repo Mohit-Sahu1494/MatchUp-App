@@ -55,26 +55,25 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   }
 
   Future<void> _initChat() async {
+    // 1. Get my userId FIRST so formatMessage works correctly
     _myUserId = await TokenStorage.getUserId();
-    await _webrtc.initRenderers();
-    await _fetchMessages();
 
-    // Ensure socket is connected and join conversation room
+    // 2. Connect socket and join conversation room
     await _socket.connect();
     _socket.joinConversation(widget.conversationId);
 
-    // 1. Listen for new incoming private messages
+    // 3. Register ALL socket listeners before fetching (avoid race conditions)
     _socket.on('new_private_message', _handleIncomingMessage);
-
-    // 2. Listen for message edit event
     _socket.on('message_edited', _handleMessageEdited);
-
-    // 3. Listen for message deleted event
     _socket.on('message_deleted', _handleMessageDeleted);
-
-    // 4. Typing indicators
     _socket.on('user_typing_start', _handleTypingStart);
     _socket.on('user_typing_stop', _handleTypingStop);
+
+    // 4. Now load history
+    await _fetchMessages();
+
+    // 5. Init WebRTC renderers (background, non-blocking)
+    _webrtc.initRenderers().catchError((_) {});
   }
 
   void _handleIncomingMessage(dynamic data) {
@@ -431,7 +430,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     _socket.leaveConversation(widget.conversationId);
     _messageController.dispose();
     _scrollController.dispose();
-    _webrtc.dispose();
+    // Note: _webrtc.dispose() is handled by MainBottomNav's singleton
+    // Only dispose renderers if this screen owns a local webrtc instance
     super.dispose();
   }
 

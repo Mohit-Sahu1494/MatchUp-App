@@ -24,6 +24,7 @@ class _LikesScreenState extends State<LikesScreen> {
   List<LikeModel> _likes = [];
   bool _isLoading = true;
   String? _errorMessage;
+  final WebRTCService _webrtc = WebRTCService(); // singleton
 
   @override
   void initState() {
@@ -75,15 +76,16 @@ class _LikesScreenState extends State<LikesScreen> {
   }
 
   Future<void> _startCall(LikeModel like, {required bool isVideo}) async {
-    final webrtc = WebRTCService();
-    await webrtc.initRenderers();
-    await webrtc.startCall(like.targetUserId, isVideo: isVideo);
+    try {
+      await _webrtc.initRenderers();
+    } catch (_) {}
+    await _webrtc.startCall(like.targetUserId, isVideo: isVideo);
 
     if (mounted) {
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CallScreen(
-            webrtcService: webrtc,
+            webrtcService: _webrtc,
             peerName: like.name,
             peerPhoto: like.profilePhoto,
             isVideo: isVideo,
@@ -438,17 +440,22 @@ class _LikesScreenState extends State<LikesScreen> {
             // Bottom Actions Row
             Row(
               children: [
-                // Relationship Preference
+                // Relationship Preference — Flexible so it doesn't push buttons off
                 if (like.relationshipPreferences.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(AppRadius.full),
-                    ),
-                    child: Text(
-                      like.relationshipPreferences.first,
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.primary),
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                      ),
+                      child: Text(
+                        like.relationshipPreferences.first,
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.primary),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
                     ),
                   ),
 
@@ -458,7 +465,10 @@ class _LikesScreenState extends State<LikesScreen> {
                 IconButton(
                   icon: const Icon(Icons.card_giftcard, size: 20, color: AppColors.warning),
                   tooltip: 'Send Gift',
-                  onPressed: () => GiftModalSheet.show(context, receiverId: like.targetUserId, receiverName: like.name),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  onPressed: () => GiftModalSheet.show(
+                      context, receiverId: like.targetUserId, receiverName: like.name),
                 ),
 
                 // Communication Actions (Enabled only if Matched)
@@ -466,25 +476,34 @@ class _LikesScreenState extends State<LikesScreen> {
                   IconButton(
                     icon: const Icon(Icons.call_outlined, size: 20, color: AppColors.primary),
                     tooltip: 'Audio Call',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     onPressed: () => _startCall(like, isVideo: false),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.videocam_outlined, size: 22, color: AppColors.primary),
+                    icon: const Icon(Icons.videocam_outlined, size: 20, color: AppColors.primary),
                     tooltip: 'Video Call',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     onPressed: () => _startCall(like, isVideo: true),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.chat_bubble_outline, size: 20, color: AppColors.secondary),
+                    icon: const Icon(Icons.chat_bubble_outline,
+                        size: 20, color: AppColors.secondary),
                     tooltip: 'Message',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     onPressed: () => _openChat(like),
                   ),
                 ] else ...[
-                  // If one-sided like, show subtle hint
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Text(
-                      'Waiting for mutual like ⏳',
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  Flexible(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Text(
+                        'Waiting ⏳',
+                        style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                 ],
