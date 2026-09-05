@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../core/constants/api_endpoints.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
@@ -10,14 +12,18 @@ import '../../../core/widgets/avatar_image.dart';
 import '../models/profile_model.dart';
 
 const List<String> kPresetAvatars = [
-  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500',
-  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500',
-  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=500',
-  'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=500',
-  'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=500',
-  'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500',
-  'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=500',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Alex',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Maya',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Sam',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Leo',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Zoe',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Jordan',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Kai',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Luna',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Robin',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Oliver',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Chloe',
+  'https://api.dicebear.com/7.x/adventurer/png?seed=Taylor',
 ];
 
 const List<String> kAvailableInterests = [
@@ -166,11 +172,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const SizedBox(height: AppSpacing.md),
             Center(
               child: OutlinedButton.icon(
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                label: const Text('Use your own photo'),
+                icon: const Icon(Icons.upload_file_rounded),
+                label: const Text('Upload Custom Photo'),
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _promptCustomPhoto();
+                  _pickAndUploadAvatar();
                 },
               ),
             ),
@@ -181,45 +187,86 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  void _promptCustomPhoto() {
-    final controller = TextEditingController(text: _selectedPhoto.startsWith('http') ? _selectedPhoto : '');
-    showDialog(
+  bool _isUploadingPhoto = false;
+
+  Future<void> _pickAndUploadAvatar() async {
+    final picker = ImagePicker();
+    final source = await showModalBottomSheet<ImageSource>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Use Your Own Photo'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Enter the web URL for your profile photo:'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: 'https://example.com/photo.jpg',
-                prefixIcon: Icon(Icons.link),
-              ),
-            ),
-          ],
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined, color: AppColors.primary),
+                title: const Text('Choose from Gallery'),
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined, color: AppColors.primary),
+                title: const Text('Take a Photo'),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () {
-              final url = controller.text.trim();
-              if (url.isNotEmpty && (url.startsWith('http://') || url.startsWith('https://'))) {
-                setState(() => _selectedPhoto = url);
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Use Photo'),
-          ),
-        ],
+        ),
       ),
     );
+
+    if (source == null) return;
+
+    try {
+      final pickedFile = await picker.pickImage(
+        source: source,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 85,
+      );
+      if (pickedFile == null) return;
+
+      setState(() => _isUploadingPhoto = true);
+
+      final formData = FormData.fromMap({
+        'media': await MultipartFile.fromFile(
+          pickedFile.path,
+          filename: pickedFile.name,
+        ),
+        'type': 'avatar',
+      });
+
+      final res = await ApiClient().post(ApiEndpoints.uploadMedia, data: formData);
+
+      if (res.data is Map && res.data['success'] == true) {
+        final uploadedUrl = res.data['data']?['url'] ?? res.data['url'];
+        if (uploadedUrl != null && mounted) {
+          setState(() {
+            _selectedPhoto = uploadedUrl;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Avatar uploaded successfully!')),
+          );
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res.data['message'] ?? 'Upload failed.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not upload image. Please try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingPhoto = false);
+    }
   }
 
   @override
@@ -248,13 +295,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             // Avatar Selector Centerpiece
             Center(
               child: Stack(
+                alignment: Alignment.center,
                 children: [
                   AvatarImage(url: _selectedPhoto, radius: 52),
+                  if (_isUploadingPhoto)
+                    Container(
+                      width: 104,
+                      height: 104,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.black.withOpacity(0.45),
+                      ),
+                      child: const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                    ),
                   Positioned(
                     bottom: 0,
                     right: 0,
                     child: GestureDetector(
-                      onTap: _showAvatarPicker,
+                      onTap: _isUploadingPhoto ? null : _showAvatarPicker,
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: const BoxDecoration(
@@ -271,7 +331,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const SizedBox(height: AppSpacing.xs),
             Center(
               child: TextButton(
-                onPressed: _showAvatarPicker,
+                onPressed: _isUploadingPhoto ? null : _showAvatarPicker,
                 child: const Text('Change Avatar'),
               ),
             ),

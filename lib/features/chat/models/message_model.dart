@@ -25,6 +25,9 @@ class MessageModel {
   final String text;
   final String mediaUrl;
   final String mediaType;
+  final String thumbnailUrl;
+  final int duration;
+  final String fileName;
   final Map<String, dynamic>? giftData;
   final ReplyToModel? replyTo;
   final bool isEdited;
@@ -40,6 +43,9 @@ class MessageModel {
     required this.text,
     required this.mediaUrl,
     required this.mediaType,
+    this.thumbnailUrl = '',
+    this.duration = 0,
+    this.fileName = '',
     this.giftData,
     this.replyTo,
     this.isEdited = false,
@@ -65,6 +71,9 @@ class MessageModel {
       text: json['text'] ?? '',
       mediaUrl: json['mediaUrl'] ?? '',
       mediaType: json['mediaType'] ?? 'text',
+      thumbnailUrl: json['thumbnailUrl'] ?? '',
+      duration: json['duration'] is int ? json['duration'] : (int.tryParse(json['duration']?.toString() ?? '') ?? 0),
+      fileName: json['fileName'] ?? '',
       giftData: json['giftData'],
       replyTo: reply,
       isEdited: json['isEdited'] == true,
@@ -80,14 +89,20 @@ class MessageModel {
     bool? isEdited,
     bool? isDeletedForEveryone,
     String? status,
+    String? mediaUrl,
+    String? mediaType,
+    String? thumbnailUrl,
   }) {
     return MessageModel(
       id: id,
       conversationId: conversationId,
       senderId: senderId,
       text: text ?? this.text,
-      mediaUrl: mediaUrl,
-      mediaType: mediaType,
+      mediaUrl: mediaUrl ?? this.mediaUrl,
+      mediaType: mediaType ?? this.mediaType,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      duration: duration,
+      fileName: fileName,
       giftData: giftData,
       replyTo: replyTo,
       isEdited: isEdited ?? this.isEdited,

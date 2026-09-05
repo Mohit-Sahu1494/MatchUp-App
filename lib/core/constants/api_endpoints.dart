@@ -63,6 +63,7 @@ class ApiEndpoints {
   static const String resetPassword = '/auth/reset-password';
   static const String logout = '/auth/logout';
   static const String deleteAccount = '/auth/delete-account';
+  static const String uploadAvatar = '/auth/upload-avatar';
 
   // Profile & User
   static const String me = '/users/me';
@@ -92,6 +93,7 @@ class ApiEndpoints {
   static String chatMessages(String conversationId) =>
       '/chats/$conversationId/messages';
   static const String sendMessage = '/chats/messages';
+  static const String chatUpload = '/chats/upload';
   static const String globalChatMessages = '/global-chat/messages';
   static String globalChatMessage(String id) => '/global-chat/messages/$id';
 

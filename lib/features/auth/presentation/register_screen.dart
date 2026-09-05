@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../../core/constants/api_endpoints.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
@@ -148,6 +149,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _registrationToken = token;
           _currentStep = 1;
         });
+      } else if (mounted) {
+        // User clicked Back from verification screen without completing
+        setState(() {
+          _registrationToken = null;
+        });
       }
     } on DioException catch (error) {
       final data = error.response?.data;
@@ -166,6 +172,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() {
         _errorMessage = null;
         _currentStep--;
+        if (_currentStep == 0) {
+          // If going back to credentials, clear old token so re-verification is required
+          _registrationToken = null;
+        }
       });
     } else {
       Navigator.pop(context);
@@ -405,13 +415,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
         const SizedBox(height: AppSpacing.xl),
         Center(
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: AppColors.primaryGradient,
-            ),
-            child: AvatarImage(url: _selectedAvatar, radius: 56),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: AppColors.primaryGradient,
+                ),
+                child: AvatarImage(url: _selectedAvatar, radius: 56),
+              ),
+              if (_isUploadingAvatar)
+                Container(
+                  width: 112,
+                  height: 112,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black.withOpacity(0.45),
+                  ),
+                  child: const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
+                ),
+            ],
           ),
         ),
         const SizedBox(height: AppSpacing.xl),
@@ -447,9 +474,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         const SizedBox(height: AppSpacing.lg),
         Center(
           child: OutlinedButton.icon(
-            icon: const Icon(Icons.add_photo_alternate_outlined),
-            label: const Text('Use your own photo'),
-            onPressed: _promptCustomPhoto,
+            icon: const Icon(Icons.upload_file_rounded),
+            label: Text(_isUploadingAvatar ? 'Uploading image...' : 'Upload your own image'),
+            onPressed: _isUploadingAvatar ? null : _pickAndUploadAvatar,
           ),
         ),
       ],
@@ -649,46 +676,84 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  void _promptCustomPhoto() {
-    final controller = TextEditingController(
-        text: _selectedAvatar.startsWith('http') ? _selectedAvatar : '');
-    showDialog(
+  bool _isUploadingAvatar = false;
+
+  Future<void> _pickAndUploadAvatar() async {
+    final picker = ImagePicker();
+    final source = await showModalBottomSheet<ImageSource>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Use Your Own Photo'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Enter the web URL for your profile photo:'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: 'https://example.com/photo.jpg',
-                prefixIcon: Icon(Icons.link),
-              ),
-            ),
-          ],
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined, color: AppColors.primary),
+                title: const Text('Choose from Gallery'),
+                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined, color: AppColors.primary),
+                title: const Text('Take a Photo'),
+                onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () {
-              final url = controller.text.trim();
-              if (url.isNotEmpty &&
-                  (url.startsWith('http://') || url.startsWith('https://'))) {
-                setState(() => _selectedAvatar = url);
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Use Photo'),
-          ),
-        ],
+        ),
       ),
     );
+
+    if (source == null) return;
+
+    try {
+      final picked = await picker.pickImage(
+        source: source,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+
+      setState(() => _isUploadingAvatar = true);
+
+      final formData = FormData.fromMap({
+        'image': await MultipartFile.fromFile(
+          picked.path,
+          filename: picked.name,
+        ),
+      });
+
+      final res = await ApiClient().post(ApiEndpoints.uploadAvatar, data: formData);
+
+      if (res.data is Map && res.data['success'] == true) {
+        final uploadedUrl = res.data['data']?['url'] ?? res.data['url'];
+        if (uploadedUrl != null && mounted) {
+          setState(() {
+            _selectedAvatar = uploadedUrl;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Avatar uploaded successfully!')),
+          );
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res.data['message'] ?? 'Upload failed.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to upload image. Please try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingAvatar = false);
+    }
   }
 }

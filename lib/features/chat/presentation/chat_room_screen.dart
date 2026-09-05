@@ -1,8 +1,11 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
-import 'dart:async';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/constants/api_endpoints.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
@@ -12,6 +15,8 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/widgets/avatar_image.dart';
 import '../models/message_model.dart';
+import '../widgets/image_viewer_modal.dart';
+import '../widgets/video_player_modal.dart';
 import '../../gifts/presentation/gift_modal_sheet.dart';
 import '../../calling/services/webrtc_service.dart';
 import '../../calling/presentation/call_screen.dart';
@@ -40,6 +45,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   final List<MessageModel> _messages = [];
   bool _isLoading = true;
   bool _isTyping = false;
+  bool _isUploading = false;
   String? _myUserId;
   MessageModel? _replyingTo;
   Timer? _typingDebounce;
@@ -206,6 +212,160 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     } catch (e) {
       debugPrint('[Send Error] $e');
     }
+  }
+
+  /// Pick an image or video and upload it to the backend, then send as a message.
+  Future<void> _uploadAndSendMedia({required ImageSource source, bool video = false}) async {
+    try {
+      final picker = ImagePicker();
+      XFile? pickedFile;
+      if (video) {
+        pickedFile = await picker.pickVideo(source: source, maxDuration: const Duration(minutes: 5));
+      } else {
+        pickedFile = await picker.pickImage(source: source, imageQuality: 85);
+      }
+      if (pickedFile == null) return;
+
+      setState(() => _isUploading = true);
+
+      final file = File(pickedFile.path);
+      final fileName = pickedFile.name;
+      final mimeType = video ? 'video/mp4' : 'image/jpeg';
+
+      // Upload to /chats/upload
+      final formData = FormData.fromMap({
+        'file': await MultipartFile.fromFile(
+          file.path,
+          filename: fileName,
+          contentType: DioMediaType.parse(mimeType),
+        ),
+      });
+
+      final uploadRes = await ApiClient().dio.post(
+        ApiEndpoints.chatUpload,
+        data: formData,
+        options: Options(contentType: 'multipart/form-data'),
+      );
+
+      if (uploadRes.data['success'] != true) {
+        throw Exception(uploadRes.data['message'] ?? 'Upload failed');
+      }
+
+      final uploadData = uploadRes.data['data'];
+      final mediaUrl = uploadData['url'] as String;
+      final mediaType = uploadData['mediaType'] as String;
+      final thumbnailUrl = (uploadData['thumbnailUrl'] ?? '') as String;
+      final duration = (uploadData['duration'] ?? 0) as int;
+      final remoteFileName = (uploadData['fileName'] ?? fileName) as String;
+
+      // Send message with media fields
+      final replyId = _replyingTo?.id;
+      setState(() => _replyingTo = null);
+      _stopTyping();
+
+      final res = await ApiClient().post(ApiEndpoints.sendMessage, data: {
+        'conversationId': widget.conversationId,
+        'text': '',
+        'mediaUrl': mediaUrl,
+        'mediaType': mediaType,
+        'thumbnailUrl': thumbnailUrl,
+        'duration': duration,
+        'fileName': remoteFileName,
+        'replyToMessageId': replyId,
+      });
+
+      if (res.data['success'] == true) {
+        final sentMsg = MessageModel.fromJson(res.data['data'], currentUserId: _myUserId);
+        setState(() {
+          if (!_messages.any((m) => m.id == sentMsg.id)) {
+            _messages.add(sentMsg);
+          }
+        });
+        _scrollToBottom();
+      }
+    } catch (e) {
+      debugPrint('[MediaUpload] Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_apiErrorMessage(e, 'Failed to send media'))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploading = false);
+    }
+  }
+
+  /// Show a bottom sheet to choose image/video source.
+  void _showMediaPickerOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.primary,
+                  child: Icon(Icons.photo_library_outlined, color: Colors.white, size: 20),
+                ),
+                title: const Text('Photo from Gallery'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _uploadAndSendMedia(source: ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.orange,
+                  child: Icon(Icons.camera_alt_outlined, color: Colors.white, size: 20),
+                ),
+                title: const Text('Take a Photo'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _uploadAndSendMedia(source: ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.purple,
+                  child: Icon(Icons.videocam_outlined, color: Colors.white, size: 20),
+                ),
+                title: const Text('Video from Gallery'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _uploadAndSendMedia(source: ImageSource.gallery, video: true);
+                },
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.red,
+                  child: Icon(Icons.video_camera_back_outlined, color: Colors.white, size: 20),
+                ),
+                title: const Text('Record a Video'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _uploadAndSendMedia(source: ImageSource.camera, video: true);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _handleEditMessage(MessageModel message) async {
@@ -618,6 +778,22 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             child: SafeArea(
               child: Row(
                 children: [
+                  // Media attach button
+                  if (_isUploading)
+                    const SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Padding(
+                        padding: EdgeInsets.all(10),
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                      ),
+                    )
+                  else
+                    IconButton(
+                      icon: const Icon(Icons.attach_file_rounded, color: Colors.grey),
+                      tooltip: 'Attach photo or video',
+                      onPressed: _showMediaPickerOptions,
+                    ),
                   Expanded(
                     child: TextField(
                       controller: _messageController,
@@ -631,9 +807,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.send_rounded,
-                        color: AppColors.primary),
-                    onPressed: () => _sendMessage(),
+                    icon: const Icon(Icons.send_rounded, color: AppColors.primary),
+                    onPressed: _isUploading ? null : () => _sendMessage(),
                   ),
                 ],
               ),
@@ -667,6 +842,15 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   Widget _buildMessageBubble(MessageModel msg, bool isMe, bool isDark) {
     final isDeleted = msg.isDeletedForEveryone;
+    final hasMedia = msg.mediaUrl.isNotEmpty && !isDeleted;
+    final isImageMsg = msg.mediaType == 'image';
+    final isVideoMsg = msg.mediaType == 'video';
+    final isGiftMsg = msg.mediaType == 'gift';
+
+    // For media-only bubbles, no horizontal padding on the image side
+    final EdgeInsets bubblePadding = hasMedia && msg.text.isEmpty
+        ? EdgeInsets.zero
+        : const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 8);
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -674,8 +858,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         margin: const EdgeInsets.symmetric(vertical: 4),
         constraints:
             BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        padding:
-            const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 8),
         decoration: BoxDecoration(
           color: isDeleted
               ? (isDark ? Colors.grey[850] : Colors.grey[200])
@@ -691,99 +873,245 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           border:
               isMe || isDark ? null : Border.all(color: AppColors.lightBorder),
         ),
-        child: Column(
-          crossAxisAlignment:
-              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            // Quoted Reply Preview inside bubble
-            if (msg.replyTo != null && !isDeleted) ...[
-              Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: isMe
-                      ? Colors.black.withOpacity(0.15)
-                      : Colors.black.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                ),
-                child: Text(
-                  msg.replyTo!.text,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontStyle: FontStyle.italic,
-                    color: isMe ? Colors.white70 : Colors.black87,
+        child: ClipRRect(
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(AppRadius.md),
+            topRight: const Radius.circular(AppRadius.md),
+            bottomLeft: Radius.circular(isMe ? AppRadius.md : 0),
+            bottomRight: Radius.circular(isMe ? 0 : AppRadius.md),
+          ),
+          child: Column(
+            crossAxisAlignment:
+                isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              // ── IMAGE bubble ──────────────────────────────────────────
+              if (hasMedia && isImageMsg)
+                GestureDetector(
+                  onTap: () => ImageViewerModal.show(context, imageUrl: msg.mediaUrl),
+                  child: CachedNetworkImage(
+                    imageUrl: msg.mediaUrl,
+                    width: MediaQuery.of(context).size.width * 0.7,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                      height: 160,
+                      color: Colors.black12,
+                      child: const Center(child: CircularProgressIndicator()),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      height: 120,
+                      color: Colors.black12,
+                      child: const Icon(Icons.broken_image, size: 40, color: Colors.white54),
+                    ),
                   ),
+                ),
+
+              // ── VIDEO bubble ──────────────────────────────────────────
+              if (hasMedia && isVideoMsg)
+                GestureDetector(
+                  onTap: () => VideoPlayerModal.show(context,
+                      videoUrl: msg.mediaUrl,
+                      title: msg.fileName.isNotEmpty ? msg.fileName : 'Video'),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Thumbnail or fallback
+                      msg.thumbnailUrl.isNotEmpty
+                          ? CachedNetworkImage(
+                              imageUrl: msg.thumbnailUrl,
+                              width: MediaQuery.of(context).size.width * 0.7,
+                              height: 180,
+                              fit: BoxFit.cover,
+                              placeholder: (_, __) => Container(
+                                height: 180,
+                                color: Colors.black,
+                                child: const Center(child: CircularProgressIndicator()),
+                              ),
+                              errorWidget: (_, __, ___) => Container(
+                                height: 180,
+                                width: double.infinity,
+                                color: Colors.black87,
+                              ),
+                            )
+                          : Container(
+                              height: 180,
+                              width: MediaQuery.of(context).size.width * 0.7,
+                              color: Colors.black87,
+                            ),
+                      // Play button overlay
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.45),
+                          shape: BoxShape.circle,
+                        ),
+                        padding: const EdgeInsets.all(14),
+                        child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 40),
+                      ),
+                      // Duration badge
+                      if (msg.duration > 0)
+                        Positioned(
+                          bottom: 8,
+                          right: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              _formatDuration(msg.duration),
+                              style: const TextStyle(color: Colors.white, fontSize: 11),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+              // ── GIFT bubble ───────────────────────────────────────────
+              if (hasMedia && isGiftMsg && msg.giftData != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        msg.giftData!['icon'] ?? '🎁',
+                        style: const TextStyle(fontSize: 32),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            msg.giftData!['name'] ?? 'Gift',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: isMe ? Colors.white : AppColors.lightTextPrimary,
+                              fontSize: 14,
+                            ),
+                          ),
+                          Text(
+                            '${msg.giftData!['pointValue'] ?? ''} pts',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isMe ? Colors.white70 : Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+              // ── Text / caption / deleted placeholder ─────────────────
+              Padding(
+                padding: bubblePadding.copyWith(
+                  top: hasMedia ? 6 : bubblePadding.top,
+                  bottom: bubblePadding.bottom,
+                ),
+                child: Column(
+                  crossAxisAlignment:
+                      isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                  children: [
+                    // Quoted Reply Preview inside bubble
+                    if (msg.replyTo != null && !isDeleted) ...[
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: isMe
+                              ? Colors.black.withOpacity(0.15)
+                              : Colors.black.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: Text(
+                          msg.replyTo!.text,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                            color: isMe ? Colors.white70 : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    // Message text / deleted placeholder
+                    if (isDeleted)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.block, size: 14, color: Colors.grey),
+                          const SizedBox(width: 4),
+                          Text(
+                            'This message was deleted',
+                            style: TextStyle(
+                                fontStyle: FontStyle.italic,
+                                color: Colors.grey[600],
+                                fontSize: 13),
+                          ),
+                        ],
+                      )
+                    else if (msg.text.isNotEmpty && !isGiftMsg)
+                      Text(
+                        msg.text,
+                        style: TextStyle(
+                          color: isMe
+                              ? Colors.white
+                              : (isDark
+                                  ? AppColors.darkTextPrimary
+                                  : AppColors.lightTextPrimary),
+                          fontSize: 15,
+                        ),
+                      ),
+
+                    const SizedBox(height: 3),
+
+                    // Timestamp and read/edited status
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (msg.isEdited && !isDeleted) ...[
+                          Text(
+                            '(edited) ',
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: isMe ? Colors.white60 : Colors.grey),
+                          ),
+                        ],
+                        Text(
+                          DateFormat('hh:mm a').format(msg.createdAt),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isMe ? Colors.white70 : Colors.grey,
+                          ),
+                        ),
+                        if (isMe && !isDeleted) ...[
+                          const SizedBox(width: 4),
+                          Icon(
+                            msg.status == 'read' ? Icons.done_all : Icons.done,
+                            size: 13,
+                            color: msg.status == 'read'
+                                ? AppColors.accent
+                                : Colors.white70,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ],
-
-            // Message text or deleted placeholder
-            if (isDeleted)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.block, size: 14, color: Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(
-                    'This message was deleted',
-                    style: TextStyle(
-                        fontStyle: FontStyle.italic,
-                        color: Colors.grey[600],
-                        fontSize: 13),
-                  ),
-                ],
-              )
-            else
-              Text(
-                msg.text,
-                style: TextStyle(
-                  color: isMe
-                      ? Colors.white
-                      : (isDark
-                          ? AppColors.darkTextPrimary
-                          : AppColors.lightTextPrimary),
-                  fontSize: 15,
-                ),
-              ),
-
-            const SizedBox(height: 3),
-
-            // Timestamp and edited / read status
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (msg.isEdited && !isDeleted) ...[
-                  Text(
-                    '(edited) ',
-                    style: TextStyle(
-                        fontSize: 10,
-                        color: isMe ? Colors.white60 : Colors.grey),
-                  ),
-                ],
-                Text(
-                  DateFormat('hh:mm a').format(msg.createdAt),
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: isMe ? Colors.white70 : Colors.grey,
-                  ),
-                ),
-                if (isMe && !isDeleted) ...[
-                  const SizedBox(width: 4),
-                  Icon(
-                    msg.status == 'read' ? Icons.done_all : Icons.done,
-                    size: 13,
-                    color: msg.status == 'read'
-                        ? AppColors.accent
-                        : Colors.white70,
-                  ),
-                ],
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  String _formatDuration(int seconds) {
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 }
