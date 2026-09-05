@@ -268,6 +268,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               // College & Education Pill
               Container(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width - (AppSpacing.xl * 2),
+                ),
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 5),
                 decoration: BoxDecoration(
                   color: isDark ? AppColors.darkSurface : AppColors.lightBackground,
@@ -279,10 +282,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     const Icon(Icons.school_outlined, size: 16, color: AppColors.primary),
                     const SizedBox(width: 6),
-                    Text(
-                      '${_profile!.college} • (Yr ${_profile!.year})',
-                      style: AppTypography.labelSmall.copyWith(
-                        fontWeight: FontWeight.w600,
+                    Flexible(
+                      child: Text(
+                        '${_profile!.college} • (Yr ${_profile!.year})',
+                        style: AppTypography.labelSmall.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -577,12 +584,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildEduRow(IconData icon, String label, String value) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Icon(icon, size: 18, color: AppColors.primary),
         const SizedBox(width: AppSpacing.sm),
         Text(label, style: AppTypography.labelSmall.copyWith(color: Colors.grey)),
-        const Spacer(),
-        Text(value, style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: AppTypography.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ],
     );
   }

@@ -6,7 +6,6 @@ import '../features/global_chat/presentation/global_chat_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/calling/services/webrtc_service.dart';
 import '../features/calling/presentation/call_screen.dart';
-import '../core/network/socket_service.dart';
 import '../core/theme/app_colors.dart';
 
 class MainBottomNav extends StatefulWidget {
@@ -18,7 +17,6 @@ class MainBottomNav extends StatefulWidget {
 
 class _MainBottomNavState extends State<MainBottomNav> {
   int _currentIndex = 0;
-  final SocketService _socket = SocketService();
   final WebRTCService _webrtc = WebRTCService();
 
   final List<Widget> _screens = const [
@@ -28,6 +26,8 @@ class _MainBottomNavState extends State<MainBottomNav> {
     GlobalChatScreen(),
     ProfileScreen(),
   ];
+
+  bool _isCallScreenActive = false;
 
   @override
   void initState() {
@@ -39,15 +39,16 @@ class _MainBottomNavState extends State<MainBottomNav> {
   void _setupIncomingCallListener() {
     // Init renderers silently so they're ready
     _webrtc.initRenderers().catchError((_) {});
-
-    _socket.on('incoming_call', (data) {
+    _webrtc.onIncomingCall = (callData) {
       if (!mounted) return;
-      final callData = Map<String, dynamic>.from(data);
       _showIncomingCallScreen(callData);
-    });
+    };
   }
 
   void _showIncomingCallScreen(Map<String, dynamic> callData) {
+    if (_isCallScreenActive) return;
+    _isCallScreenActive = true;
+
     final callerName = callData['callerName'] as String? ?? 'Unknown';
     final callerPhoto = callData['callerPhoto'] as String? ?? '';
     final callType = callData['callType'] as String? ?? 'video';
@@ -63,12 +64,14 @@ class _MainBottomNavState extends State<MainBottomNav> {
           incomingCallData: callData,
         ),
       ),
-    );
+    ).then((_) {
+      _isCallScreenActive = false;
+    });
   }
 
   @override
   void dispose() {
-    _socket.off('incoming_call');
+    _webrtc.onIncomingCall = null;
     _webrtc.dispose();
     super.dispose();
   }
@@ -99,9 +102,9 @@ class _MainBottomNavState extends State<MainBottomNav> {
             label: 'Explore',
           ),
           NavigationDestination(
-            icon: Icon(Icons.favorite_border),
-            selectedIcon: Icon(Icons.favorite, color: AppColors.secondary),
-            label: 'Likes',
+            icon: Icon(Icons.chat_bubble_outline),
+            selectedIcon: Icon(Icons.chat_bubble, color: AppColors.primary),
+            label: 'Chats',
           ),
           NavigationDestination(
             icon: Icon(Icons.forum_outlined),

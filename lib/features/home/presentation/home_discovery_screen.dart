@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/constants/api_endpoints.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/socket_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
@@ -30,6 +31,8 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
   int _currentIndex = 0;
   String? _todayMood;
   int _unreadNotificationCount = 0;
+  final Set<String> _swipedUserIds = {};
+  final SocketService _socket = SocketService();
 
   // Swipe animation state
   Offset _dragOffset = Offset.zero;
@@ -49,16 +52,30 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       CurvedAnimation(parent: _animController, curve: Curves.easeOut),
     );
 
+    _setupNotificationSocket();
     _fetchFeed();
     _fetchNotificationCount();
     _checkDailyMood();
   }
 
+  void _setupNotificationSocket() {
+    _socket.connect().then((_) {
+      _socket.on('new_notification', _handleNewNotification);
+    }).catchError((_) {});
+  }
+
+  void _handleNewNotification(dynamic _) {
+    if (mounted) {
+      setState(() => _unreadNotificationCount++);
+    }
+  }
+
   Future<void> _fetchNotificationCount() async {
     try {
       final response = await ApiClient().get(ApiEndpoints.notifications);
-      if (!mounted || response.data is! Map || response.data['success'] != true)
+      if (!mounted || response.data is! Map || response.data['success'] != true) {
         return;
+      }
       final notifications = response.data['data'] as List? ?? const [];
       setState(() => _unreadNotificationCount = notifications
           .where((item) => item is Map && item['isRead'] != true)
@@ -70,6 +87,7 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
 
   @override
   void dispose() {
+    _socket.off('new_notification', _handleNewNotification);
     _animController.dispose();
     super.dispose();
   }
@@ -91,8 +109,14 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       final res = await ApiClient().get(ApiEndpoints.discoveryFeed);
       if (res.data['success'] == true) {
         final List list = res.data['data']['profiles'] ?? [];
+        final parsed = list
+            .map((item) => ProfileModel.fromJson(item))
+            .where((p) =>
+                !_swipedUserIds.contains(p.userId) &&
+                !_swipedUserIds.contains(p.id))
+            .toList();
         setState(() {
-          _profiles = list.map((item) => ProfileModel.fromJson(item)).toList();
+          _profiles = parsed;
           _currentIndex = 0;
           _isLoading = false;
         });
@@ -137,9 +161,13 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       _dragOffset = Offset.zero;
     });
 
+    final targetId = target.userId.isNotEmpty ? target.userId : target.id;
+    if (target.userId.isNotEmpty) _swipedUserIds.add(target.userId);
+    if (target.id.isNotEmpty) _swipedUserIds.add(target.id);
+
     try {
       final res = await ApiClient().post(ApiEndpoints.swipe, data: {
-        'targetUserId': target.userId,
+        'targetUserId': targetId,
         'action': action,
       });
 
@@ -532,6 +560,7 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
                             ]),
                             tooltip: 'Notifications',
                             onPressed: () async {
+                              setState(() => _unreadNotificationCount = 0);
                               await Navigator.of(context).push(
                                 MaterialPageRoute(
                                     builder: (_) =>
@@ -1046,6 +1075,8 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
                   // College & Major
                   Text(
                     '${profile.college} • ${profile.course} (Yr ${profile.year})',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 13,

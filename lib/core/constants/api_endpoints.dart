@@ -9,8 +9,8 @@ class ApiEndpoints {
   // 10.0.2.2 (Android QEMU emulator)
   // localhost (Web & iOS Simulator)
   // https://app-production-86ea.up.railway.app
-  static String activeHost = 'https://appserver-production-0949.up.railway.app/';
-
+  static String activeHost = 'http://localhost:5000';
+//https://appserver-production-0949.up.railway.app/
   static String get host => activeHost;
   static String get baseUrl => '$activeHost/api';
   static String get socketUrl => activeHost;
@@ -18,7 +18,7 @@ class ApiEndpoints {
   /// Automatically tests candidate hosts in parallel and selects the fastest responding one
   static Future<String> autoDetectWorkingHost() async {
     if (kIsWeb) {
-      activeHost = 'https://appserver-production-0949.up.railway.app/';
+      activeHost = 'http://localhost:5000';
       return activeHost;
     }
 
@@ -106,8 +106,10 @@ class ApiEndpoints {
   static String confessionLike(String id) => '/confessions/$id/like';
   static String confessionComments(String id) => '/confessions/$id/comments';
 
-  // Safety
+  // Safety & Notifications
   static const String blockUser = '/safety/block';
   static const String report = '/safety/report';
   static const String notifications = '/notifications';
+  static const String notificationsMarkAllRead = '/notifications/mark-all-read';
+  static const String notificationsReadAll = '/notifications/read-all';
 }

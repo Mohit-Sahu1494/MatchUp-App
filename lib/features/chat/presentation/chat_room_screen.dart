@@ -233,8 +233,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ),
     );
 
-    if (editedText == null || editedText.isEmpty || editedText == message.text)
+    if (editedText == null || editedText.isEmpty || editedText == message.text) {
       return;
+    }
 
     try {
       final res = await ApiClient().put(

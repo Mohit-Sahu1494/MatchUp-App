@@ -43,9 +43,12 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
         setState(() => _callState = state);
         if (state == CallState.connected) {
           _startDurationTimer();
-        } else if (state == CallState.ended) {
+        } else if (state == CallState.ended ||
+            state == CallState.rejected ||
+            state == CallState.missed ||
+            state == CallState.failed) {
           _durationTimer?.cancel();
-          Future.delayed(const Duration(milliseconds: 600), () {
+          Future.delayed(const Duration(milliseconds: 700), () {
             if (mounted) Navigator.of(context).pop();
           });
         }
@@ -86,11 +89,20 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   String _getCallStatusText() {
     switch (_callState) {
       case CallState.outgoing:
+      case CallState.ringing:
         return 'Calling...';
       case CallState.incoming:
         return 'Incoming ${widget.isVideo ? 'Video' : 'Audio'} Call';
+      case CallState.connecting:
+        return 'Connecting...';
       case CallState.connected:
         return 'Connected • ${_formatDuration(_callDurationSeconds)}';
+      case CallState.rejected:
+        return 'Call declined';
+      case CallState.missed:
+        return 'No answer';
+      case CallState.failed:
+        return 'Call failed';
       case CallState.ended:
         return 'Call ended';
       default:

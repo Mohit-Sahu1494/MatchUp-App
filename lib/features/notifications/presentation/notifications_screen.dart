@@ -34,11 +34,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final res = await ApiClient().get(ApiEndpoints.notifications);
       if (res.data is Map && res.data['success'] == true) {
         final List list = res.data['data'] ?? [];
+        final parsed =
+            list.map((item) => Map<String, dynamic>.from(item)).toList();
+        final hasUnread = parsed.any((n) => n['isRead'] != true);
+
         setState(() {
-          _notifications =
-              list.map((item) => Map<String, dynamic>.from(item)).toList();
+          _notifications = parsed;
           _isLoading = false;
         });
+
+        // Automatically mark all unread notifications as read when screen opens
+        if (hasUnread) {
+          _autoMarkAllAsRead();
+        }
       } else if (mounted) {
         setState(() {
           _errorMessage = res.data is Map
@@ -48,11 +56,37 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         });
       }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _errorMessage = 'Unable to connect to server. Please try again.';
           _isLoading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _autoMarkAllAsRead() async {
+    try {
+      await ApiClient().put(ApiEndpoints.notificationsMarkAllRead);
+      if (mounted) {
+        setState(() {
+          for (final n in _notifications) {
+            n['isRead'] = true;
+          }
+        });
+      }
+    } catch (_) {
+      // If PUT fails, fallback to PATCH read-all
+      try {
+        await ApiClient().patch(ApiEndpoints.notificationsReadAll);
+        if (mounted) {
+          setState(() {
+            for (final n in _notifications) {
+              n['isRead'] = true;
+            }
+          });
+        }
+      } catch (_) {}
     }
   }
 
