@@ -9,7 +9,7 @@ class ApiEndpoints {
   // 10.0.2.2 (Android QEMU emulator)
   // localhost (Web & iOS Simulator)
   // https://app-production-86ea.up.railway.app
-  static String activeHost = 'http://localhost:5000';
+  static String activeHost = 'https://appserver-production-0949.up.railway.app';
 //https://appserver-production-0949.up.railway.app/
   static String get host => activeHost;
   static String get baseUrl => '$activeHost/api';
@@ -18,7 +18,7 @@ class ApiEndpoints {
   /// Automatically tests candidate hosts in parallel and selects the fastest responding one
   static Future<String> autoDetectWorkingHost() async {
     if (kIsWeb) {
-      activeHost = 'http://localhost:5000';
+      activeHost = 'https://appserver-production-0949.up.railway.app';
       return activeHost;
     }
 
