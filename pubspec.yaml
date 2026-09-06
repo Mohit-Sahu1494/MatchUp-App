@@ -32,6 +32,7 @@ dependencies:
   uuid: ^4.4.0
   image_picker: ^1.2.3
   video_player: ^2.14.0
+  audioplayers: ^6.0.0
 
 dev_dependencies:
   flutter_test:
@@ -43,6 +44,7 @@ flutter:
   assets:
     - assets/images/
     - assets/icons/
+    - assets/sounds/
 
 dependency_overrides:
   path_provider_foundation: 2.4.0

@@ -269,7 +269,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               // College & Education Pill
               Container(
                 constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width - (AppSpacing.xl * 2),
+                  maxWidth: (MediaQuery.of(context).size.width - (AppSpacing.xl * 2))
+                      .clamp(0.0, double.infinity),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 5),
                 decoration: BoxDecoration(

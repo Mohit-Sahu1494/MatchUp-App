@@ -53,6 +53,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   final SocketService _socket = SocketService();
   final WebRTCService _webrtc = WebRTCService();
+  bool _listenersRegistered = false;
 
   @override
   void initState() {
@@ -68,12 +69,15 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     await _socket.connect();
     _socket.joinConversation(widget.conversationId);
 
-    // 3. Register ALL socket listeners before fetching (avoid race conditions)
-    _socket.on('new_private_message', _handleIncomingMessage);
-    _socket.on('message_edited', _handleMessageEdited);
-    _socket.on('message_deleted', _handleMessageDeleted);
-    _socket.on('user_typing_start', _handleTypingStart);
-    _socket.on('user_typing_stop', _handleTypingStop);
+    // 3. Register socket listeners once (prevent duplicate listeners on re-entry)
+    if (!_listenersRegistered) {
+      _listenersRegistered = true;
+      _socket.on('new_private_message', _handleIncomingMessage);
+      _socket.on('message_edited', _handleMessageEdited);
+      _socket.on('message_deleted', _handleMessageDeleted);
+      _socket.on('user_typing_start', _handleTypingStart);
+      _socket.on('user_typing_stop', _handleTypingStop);
+    }
 
     // 4. Now load history
     await _fetchMessages();
@@ -176,10 +180,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   Future<void> _sendMessage(
       {String? text,
-      String mediaType = 'text',
-      Map<String, dynamic>? giftData}) async {
+      String mediaType = 'text'}) async {
     final msgText = text ?? _messageController.text.trim();
-    if (msgText.isEmpty && giftData == null) return;
+    if (msgText.isEmpty) return;
 
     final replyId = _replyingTo?.id;
 
@@ -195,7 +198,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         'conversationId': widget.conversationId,
         'text': msgText,
         'mediaType': mediaType,
-        'giftData': giftData,
         'replyToMessageId': replyId,
       });
 
@@ -581,11 +583,14 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   @override
   void dispose() {
-    _socket.off('new_private_message', _handleIncomingMessage);
-    _socket.off('message_edited', _handleMessageEdited);
-    _socket.off('message_deleted', _handleMessageDeleted);
-    _socket.off('user_typing_start', _handleTypingStart);
-    _socket.off('user_typing_stop', _handleTypingStop);
+    if (_listenersRegistered) {
+      _socket.off('new_private_message', _handleIncomingMessage);
+      _socket.off('message_edited', _handleMessageEdited);
+      _socket.off('message_deleted', _handleMessageDeleted);
+      _socket.off('user_typing_start', _handleTypingStart);
+      _socket.off('user_typing_stop', _handleTypingStop);
+      _listenersRegistered = false;
+    }
     _stopTyping();
     _typingDebounce?.cancel();
     _socket.leaveConversation(widget.conversationId);
@@ -636,7 +641,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             icon: const Icon(Icons.videocam_outlined),
             onPressed: () => _startCall(isVideo: true),
           ),
-          // Send Virtual Gift
+          // Send Virtual Gift (delivers via notification & real-time socket, NOT as chat message)
           IconButton(
             icon: const Icon(Icons.card_giftcard, color: AppColors.warning),
             onPressed: () {
@@ -644,18 +649,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 context,
                 receiverId: widget.recipientId,
                 receiverName: widget.recipientName,
-                onGiftSent: (gift) {
-                  _sendMessage(
-                    text: 'Sent a virtual gift: ${gift.icon} ${gift.name}',
-                    mediaType: 'gift',
-                    giftData: {
-                      'code': gift.code,
-                      'name': gift.name,
-                      'icon': gift.icon,
-                      'pointValue': gift.pointValue,
-                    },
-                  );
-                },
               );
             },
           ),

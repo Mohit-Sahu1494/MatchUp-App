@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../constants/api_endpoints.dart';
@@ -29,6 +30,8 @@ class SocketService {
       _socket = null;
     }
 
+    final completer = Completer<void>();
+
     _socket = io.io(
       ApiEndpoints.socketUrl,
       io.OptionBuilder()
@@ -42,24 +45,31 @@ class SocketService {
     );
 
     _socket!.onConnect((_) {
-      debugPrint('[Socket] Connected to MatchUp real-time gateway');
+      debugPrint('[SOCKET] connected to MatchUp real-time gateway');
       isConnectedNotifier.value = true;
+      if (!completer.isCompleted) completer.complete();
     });
 
     _socket!.onDisconnect((_) {
-      debugPrint('[Socket] Disconnected from MatchUp gateway');
+      debugPrint('[SOCKET] disconnected from gateway');
       isConnectedNotifier.value = false;
     });
 
     _socket!.onConnectError((err) {
-      debugPrint('[Socket] Connection error: $err');
+      debugPrint('[SOCKET] connection error: $err');
       isConnectedNotifier.value = false;
+      if (!completer.isCompleted) completer.complete();
     });
 
     _socket!.onReconnect((_) {
-      debugPrint('[Socket] Reconnected to gateway');
+      debugPrint('[SOCKET] reconnected to gateway');
       isConnectedNotifier.value = true;
     });
+
+    // Wait up to 3 seconds for initial connection handshake
+    try {
+      await completer.future.timeout(const Duration(seconds: 3));
+    } catch (_) {}
   }
 
   void on(String event, Function(dynamic) handler) {
@@ -75,8 +85,11 @@ class SocketService {
   }
 
   void emit(String event, dynamic data) {
-    if (_socket != null && _socket!.connected) {
-      _socket?.emit(event, data);
+    if (_socket != null) {
+      debugPrint('[SOCKET] emit: $event');
+      _socket!.emit(event, data);
+    } else {
+      debugPrint('[SOCKET] emit dropped (socket is null): $event');
     }
   }
 

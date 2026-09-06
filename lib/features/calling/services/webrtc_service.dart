@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../../../core/network/socket_service.dart';
 
 enum CallState {
@@ -22,6 +23,7 @@ class WebRTCService {
   WebRTCService._internal();
 
   final SocketService _socket = SocketService();
+  final AudioPlayer _ringtonePlayer = AudioPlayer();
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -67,6 +69,23 @@ class WebRTCService {
     _setupSocketListeners();
   }
 
+  Future<void> _playRingtone() async {
+    try {
+      await _ringtonePlayer.setReleaseMode(ReleaseMode.loop);
+      await _ringtonePlayer.play(AssetSource('sounds/ringtone.wav'));
+      debugPrint('[Ringtone] Started incoming call ringtone');
+    } catch (e) {
+      debugPrint('[Ringtone] Play error: $e');
+    }
+  }
+
+  Future<void> _stopRingtone() async {
+    try {
+      await _ringtonePlayer.stop();
+      debugPrint('[Ringtone] Stopped ringtone');
+    } catch (_) {}
+  }
+
   void _setupSocketListeners() {
     if (_listenersRegistered) return;
     _listenersRegistered = true;
@@ -93,14 +112,24 @@ class WebRTCService {
 
       currentCallId = incomingCallId;
       _setCallState(CallState.incoming);
+      _playRingtone();
+
       if (onIncomingCall != null) {
         onIncomingCall!(callData);
       }
     });
 
+    // Caller cancelled call while ringing
+    _socket.on('call_cancelled', (data) {
+      debugPrint('[WebRTC] Call cancelled by caller');
+      _stopRingtone();
+      _handleCallEnd(endedState: CallState.missed);
+    });
+
     // Receiver accepted call -> set remote SDP answer
     _socket.on('call_accepted', (data) async {
       _ringingTimer?.cancel();
+      _stopRingtone();
       final answer = data['answer'];
       if (answer != null && _peerConnection != null) {
         try {
@@ -117,6 +146,7 @@ class WebRTCService {
     // Call rejected or ended
     _socket.on('call_rejected', (data) {
       _ringingTimer?.cancel();
+      _stopRingtone();
       final reason = (data is Map) ? data['reason'] : null;
       if (reason == 'busy') {
         _handleCallEnd(endedState: CallState.failed);
@@ -127,6 +157,7 @@ class WebRTCService {
 
     _socket.on('call_ended', (_) {
       _ringingTimer?.cancel();
+      _stopRingtone();
       _handleCallEnd(endedState: CallState.ended);
     });
 
@@ -192,6 +223,10 @@ class WebRTCService {
         if (callState == CallState.outgoing ||
             callState == CallState.ringing ||
             callState == CallState.connecting) {
+          _socket.emit('cancel_call', {
+            'targetUserId': targetUserId,
+            'callId': currentCallId,
+          });
           _socket.emit('call_missed', {
             'targetUserId': targetUserId,
             'callType': currentCallType,
@@ -212,6 +247,7 @@ class WebRTCService {
     bool isVideo = true,
   }) async {
     _ringingTimer?.cancel();
+    _stopRingtone();
     currentTargetUserId = callerId;
     currentCallType = isVideo ? 'video' : 'audio';
     currentCallId = offerData['callId'] as String? ?? currentCallId;
@@ -244,6 +280,7 @@ class WebRTCService {
 
   void rejectCall(String callerId) {
     _ringingTimer?.cancel();
+    _stopRingtone();
     _socket.emit('reject_call', {
       'callerId': callerId,
       'callId': currentCallId,
@@ -254,11 +291,19 @@ class WebRTCService {
 
   void endCall() {
     _ringingTimer?.cancel();
+    _stopRingtone();
     if (currentTargetUserId != null) {
-      _socket.emit('end_call', {
-        'targetUserId': currentTargetUserId,
-        'callId': currentCallId,
-      });
+      if (callState == CallState.outgoing || callState == CallState.ringing) {
+        _socket.emit('cancel_call', {
+          'targetUserId': currentTargetUserId,
+          'callId': currentCallId,
+        });
+      } else {
+        _socket.emit('end_call', {
+          'targetUserId': currentTargetUserId,
+          'callId': currentCallId,
+        });
+      }
     }
     _handleCallEnd(endedState: CallState.ended);
   }
@@ -365,6 +410,7 @@ class WebRTCService {
   }
 
   void _handleCallEnd({CallState endedState = CallState.ended}) {
+    _stopRingtone();
     _ringingTimer?.cancel();
     _ringingTimer = null;
 
@@ -387,6 +433,8 @@ class WebRTCService {
   }
 
   void dispose() {
+    _stopRingtone();
+    _ringtonePlayer.dispose();
     _handleCallEnd();
     localRenderer.dispose();
     remoteRenderer.dispose();

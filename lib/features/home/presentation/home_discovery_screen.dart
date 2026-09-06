@@ -99,7 +99,10 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
     }
   }
 
-  Future<void> _fetchFeed() async {
+  Future<void> _fetchFeed({bool isRefresh = false}) async {
+    if (isRefresh) {
+      _swipedUserIds.clear();
+    }
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -109,12 +112,20 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       final res = await ApiClient().get(ApiEndpoints.discoveryFeed);
       if (res.data['success'] == true) {
         final List list = res.data['data']['profiles'] ?? [];
-        final parsed = list
+        List<ProfileModel> parsed = list
             .map((item) => ProfileModel.fromJson(item))
             .where((p) =>
                 !_swipedUserIds.contains(p.userId) &&
                 !_swipedUserIds.contains(p.id))
             .toList();
+
+        // Small user pool fallback: If all server candidates were in local swiped set,
+        // clear local history so profiles repeat and screen doesn't stay empty
+        if (parsed.isEmpty && list.isNotEmpty) {
+          _swipedUserIds.clear();
+          parsed = list.map((item) => ProfileModel.fromJson(item)).toList();
+        }
+
         setState(() {
           _profiles = parsed;
           _currentIndex = 0;
@@ -717,7 +728,7 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
                                   textAlign: TextAlign.center),
                               const SizedBox(height: AppSpacing.md),
                               ElevatedButton(
-                                  onPressed: _fetchFeed,
+                                  onPressed: () => _fetchFeed(isRefresh: true),
                                   child: const Text('Try Again')),
                             ],
                           ),
@@ -729,7 +740,8 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
                               description:
                                   'New campus students join daily. Broaden your discovery or check back soon.',
                               buttonTitle: 'Refresh Discovery',
-                              onButtonPressed: _fetchFeed,
+                              onButtonPressed: () =>
+                                  _fetchFeed(isRefresh: true),
                             )
                           : _buildSwipeStack(isDark),
             ),
