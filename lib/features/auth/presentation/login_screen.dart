@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../../core/constants/api_endpoints.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/socket_service.dart';
 import '../../../core/storage/token_storage.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
@@ -9,6 +10,7 @@ import '../../../core/theme/app_typography.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/app_text_field.dart';
 import 'register_screen.dart';
+import 'forgot_password_screen.dart';
 import '../../../navigation/main_bottom_nav.dart';
 import 'verify_email_screen.dart';
 
@@ -44,14 +46,19 @@ class _LoginScreenState extends State<LoginScreen> {
         await TokenStorage.saveToken(token);
         await TokenStorage.saveUserId(userId);
 
+        // Ensure real-time socket connects with new credentials
+        await SocketService().connect();
+
         final reward = res.data['data']['reward'];
 
         if (mounted) {
-          if (res.data['data']['rewardReceived'] == true)
+          if (res.data['data']['rewardReceived'] == true) {
             await _showDailyReward(reward?['points'] ?? 20);
-          if (mounted)
+          }
+          if (mounted) {
             Navigator.of(context).pushReplacement(
                 MaterialPageRoute(builder: (_) => const MainBottomNav()));
+          }
         }
       } else {
         setState(() => _errorMessage = res.data['message'] ?? 'Login failed');
@@ -208,7 +215,30 @@ class _LoginScreenState extends State<LoginScreen> {
                 obscureText: true,
                 prefixIcon: const Icon(Icons.lock_outline, size: 20),
               ),
-              const SizedBox(height: AppSpacing.xl),
+              const SizedBox(height: AppSpacing.xs),
+
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ForgotPasswordScreen(
+                          initialEmail: _emailController.text.trim(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: Text(
+                    'Forgot Password?',
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
 
               SizedBox(
                 width: double.infinity,

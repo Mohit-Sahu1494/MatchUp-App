@@ -57,20 +57,27 @@ class MessageModel {
 
   factory MessageModel.fromJson(Map<String, dynamic> json, {String? currentUserId}) {
     final sender = json['senderId'] is Map ? (json['senderId']['_id'] ?? '') : (json['senderId'] ?? '');
-    final bool mine = json['isMine'] == true || (currentUserId != null && currentUserId.isNotEmpty && sender.toString() == currentUserId.toString());
+    final String senderStr = sender.toString();
+    // Prioritize actual senderId vs currentUserId comparison so incoming messages are never marked isMine
+    final bool mine = (currentUserId != null && currentUserId.isNotEmpty)
+        ? (senderStr == currentUserId.toString())
+        : (json['isMine'] == true);
 
     ReplyToModel? reply;
     if (json['replyTo'] != null && json['replyTo'] is Map) {
       reply = ReplyToModel.fromJson(Map<String, dynamic>.from(json['replyTo']));
     }
 
+    final msgId = json['messageId'] ?? json['_id'] ?? json['id'] ?? '';
+    final mediaType = json['mediaType'] ?? json['messageType'] ?? 'text';
+
     return MessageModel(
-      id: json['_id'] ?? json['id'] ?? '',
-      conversationId: json['conversationId'] ?? '',
-      senderId: sender.toString(),
+      id: msgId.toString(),
+      conversationId: (json['conversationId'] ?? '').toString(),
+      senderId: senderStr,
       text: json['text'] ?? '',
       mediaUrl: json['mediaUrl'] ?? '',
-      mediaType: json['mediaType'] ?? 'text',
+      mediaType: mediaType.toString(),
       thumbnailUrl: json['thumbnailUrl'] ?? '',
       duration: json['duration'] is int ? json['duration'] : (int.tryParse(json['duration']?.toString() ?? '') ?? 0),
       fileName: json['fileName'] ?? '',
@@ -80,7 +87,7 @@ class MessageModel {
       isDeletedForEveryone: json['isDeletedForEveryone'] == true,
       isMine: mine,
       status: json['status'] ?? 'sent',
-      createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? DateTime.now(),
     );
   }
 

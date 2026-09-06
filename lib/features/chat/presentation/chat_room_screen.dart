@@ -73,10 +73,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     if (!_listenersRegistered) {
       _listenersRegistered = true;
       _socket.on('new_private_message', _handleIncomingMessage);
+      _socket.on('message_received', _handleIncomingMessage);
       _socket.on('message_edited', _handleMessageEdited);
       _socket.on('message_deleted', _handleMessageDeleted);
       _socket.on('user_typing_start', _handleTypingStart);
       _socket.on('user_typing_stop', _handleTypingStop);
+      _socket.on('typing_start', _handleTypingStart);
+      _socket.on('typing_stop', _handleTypingStop);
     }
 
     // 4. Now load history
@@ -93,6 +96,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           currentUserId: _myUserId);
       if (newMsg.conversationId == widget.conversationId) {
         setState(() {
+          _isTyping = false;
           // Deduplicate by message ID
           final existingIndex = _messages.indexWhere((m) => m.id == newMsg.id);
           if (existingIndex != -1) {
@@ -148,13 +152,21 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   }
 
   void _handleTypingStart(dynamic data) {
-    if (data['conversationId'] == widget.conversationId && mounted) {
+    if (!mounted || data is! Map) return;
+    final convId = data['conversationId']?.toString();
+    final sender = (data['senderId'] ?? data['userId'])?.toString();
+    // Do not show typing indicator for own keystrokes
+    if (sender != null && sender == _myUserId) return;
+
+    if (convId == widget.conversationId) {
       setState(() => _isTyping = true);
     }
   }
 
   void _handleTypingStop(dynamic data) {
-    if (data['conversationId'] == widget.conversationId && mounted) {
+    if (!mounted || data is! Map) return;
+    final convId = data['conversationId']?.toString();
+    if (convId == widget.conversationId) {
       setState(() => _isTyping = false);
     }
   }
@@ -585,10 +597,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   void dispose() {
     if (_listenersRegistered) {
       _socket.off('new_private_message', _handleIncomingMessage);
+      _socket.off('message_received', _handleIncomingMessage);
       _socket.off('message_edited', _handleMessageEdited);
       _socket.off('message_deleted', _handleMessageDeleted);
       _socket.off('user_typing_start', _handleTypingStart);
       _socket.off('user_typing_stop', _handleTypingStop);
+      _socket.off('typing_start', _handleTypingStart);
+      _socket.off('typing_stop', _handleTypingStop);
       _listenersRegistered = false;
     }
     _stopTyping();
@@ -596,8 +611,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     _socket.leaveConversation(widget.conversationId);
     _messageController.dispose();
     _scrollController.dispose();
-    // Note: _webrtc.dispose() is handled by MainBottomNav's singleton
-    // Only dispose renderers if this screen owns a local webrtc instance
     super.dispose();
   }
 

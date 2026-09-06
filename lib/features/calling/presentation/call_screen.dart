@@ -89,8 +89,9 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   String _getCallStatusText() {
     switch (_callState) {
       case CallState.outgoing:
-      case CallState.ringing:
         return 'Calling...';
+      case CallState.ringing:
+        return 'Ringing...';
       case CallState.incoming:
         return 'Incoming ${widget.isVideo ? 'Video' : 'Audio'} Call';
       case CallState.connecting:
@@ -267,6 +268,8 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
             // ── ACTIVE CALL Controls ──
             if (_callState == CallState.outgoing ||
+                _callState == CallState.ringing ||
+                _callState == CallState.connecting ||
                 _callState == CallState.connected)
               Positioned(
                 bottom: AppSpacing.xxl,

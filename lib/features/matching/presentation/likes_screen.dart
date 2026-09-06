@@ -98,8 +98,11 @@ class _LikesScreenState extends State<LikesScreen> {
   void _setupSocketListeners() {
     _socket.connect().then((_) {
       _socket.on('new_private_message', _handleIncomingMessage);
+      _socket.on('message_received', _handleIncomingMessage);
       _socket.on('user_typing_start', _handleTypingStart);
+      _socket.on('typing_start', _handleTypingStart);
       _socket.on('user_typing_stop', _handleTypingStop);
+      _socket.on('typing_stop', _handleTypingStop);
       _socket.on('new_match', _handleNewMatch);
       _socket.on('user_presence_change', _handlePresenceChange);
     }).catchError((_) {});
@@ -180,8 +183,11 @@ class _LikesScreenState extends State<LikesScreen> {
   @override
   void dispose() {
     _socket.off('new_private_message', _handleIncomingMessage);
+    _socket.off('message_received', _handleIncomingMessage);
     _socket.off('user_typing_start', _handleTypingStart);
+    _socket.off('typing_start', _handleTypingStart);
     _socket.off('user_typing_stop', _handleTypingStop);
+    _socket.off('typing_stop', _handleTypingStop);
     _socket.off('new_match', _handleNewMatch);
     _socket.off('user_presence_change', _handlePresenceChange);
     super.dispose();

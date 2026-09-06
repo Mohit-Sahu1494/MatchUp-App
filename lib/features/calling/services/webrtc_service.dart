@@ -73,7 +73,7 @@ class WebRTCService {
     try {
       await _ringtonePlayer.setReleaseMode(ReleaseMode.loop);
       await _ringtonePlayer.play(AssetSource('sounds/ringtone.wav'));
-      debugPrint('[Ringtone] Started incoming call ringtone');
+      debugPrint('[Ringtone] Started call ringtone');
     } catch (e) {
       debugPrint('[Ringtone] Play error: $e');
     }
@@ -82,7 +82,7 @@ class WebRTCService {
   Future<void> _stopRingtone() async {
     try {
       await _ringtonePlayer.stop();
-      debugPrint('[Ringtone] Stopped ringtone');
+      debugPrint('[Ringtone] Stopped call ringtone');
     } catch (_) {}
   }
 
@@ -90,17 +90,20 @@ class WebRTCService {
     if (_listenersRegistered) return;
     _listenersRegistered = true;
 
-    // Incoming call event
+    // Incoming call event from backend
     _socket.on('incoming_call', (data) {
+      debugPrint('[CALL] [SOCKET] incoming_call received: $data');
       final callData = Map<String, dynamic>.from(data);
       final incomingCallId = callData['callId'] as String?;
 
       // Reject if already in active call
       if (callState == CallState.connected ||
           callState == CallState.outgoing ||
+          callState == CallState.ringing ||
           callState == CallState.incoming) {
         final callerId = callData['callerId'] as String?;
         if (callerId != null) {
+          debugPrint('[CALL] Rejecting incoming call: already busy in callState $callState');
           _socket.emit('reject_call', {
             'callerId': callerId,
             'callId': incomingCallId,
@@ -111,6 +114,8 @@ class WebRTCService {
       }
 
       currentCallId = incomingCallId;
+      currentTargetUserId = callData['callerId']?.toString();
+      currentCallType = callData['callType'] as String? ?? 'video';
       _setCallState(CallState.incoming);
       _playRingtone();
 
@@ -119,15 +124,24 @@ class WebRTCService {
       }
     });
 
+    // Remote phone started ringing
+    _socket.on('call_ringing', (data) {
+      debugPrint('[CALL] [SOCKET] call_ringing received');
+      if (callState == CallState.outgoing) {
+        _setCallState(CallState.ringing);
+      }
+    });
+
     // Caller cancelled call while ringing
     _socket.on('call_cancelled', (data) {
-      debugPrint('[WebRTC] Call cancelled by caller');
+      debugPrint('[CALL] [SOCKET] Call cancelled by caller');
       _stopRingtone();
       _handleCallEnd(endedState: CallState.missed);
     });
 
     // Receiver accepted call -> set remote SDP answer
     _socket.on('call_accepted', (data) async {
+      debugPrint('[CALL] [SOCKET] call_accepted received');
       _ringingTimer?.cancel();
       _stopRingtone();
       final answer = data['answer'];
@@ -145,10 +159,11 @@ class WebRTCService {
 
     // Call rejected or ended
     _socket.on('call_rejected', (data) {
+      debugPrint('[CALL] [SOCKET] call_rejected received: $data');
       _ringingTimer?.cancel();
       _stopRingtone();
       final reason = (data is Map) ? data['reason'] : null;
-      if (reason == 'busy') {
+      if (reason == 'busy' || reason == 'offline') {
         _handleCallEnd(endedState: CallState.failed);
       } else {
         _handleCallEnd(endedState: CallState.rejected);
@@ -156,9 +171,17 @@ class WebRTCService {
     });
 
     _socket.on('call_ended', (_) {
+      debugPrint('[CALL] [SOCKET] call_ended received');
       _ringingTimer?.cancel();
       _stopRingtone();
       _handleCallEnd(endedState: CallState.ended);
+    });
+
+    _socket.on('call_timeout', (_) {
+      debugPrint('[CALL] [SOCKET] call_timeout received');
+      _ringingTimer?.cancel();
+      _stopRingtone();
+      _handleCallEnd(endedState: CallState.missed);
     });
 
     // Remote ICE candidate received
@@ -190,6 +213,7 @@ class WebRTCService {
   Future<void> startCall(String targetUserId, {bool isVideo = true}) async {
     if (callState == CallState.connected ||
         callState == CallState.outgoing ||
+        callState == CallState.ringing ||
         callState == CallState.incoming) {
       return;
     }
@@ -199,7 +223,9 @@ class WebRTCService {
     currentCallId =
         'call_${DateTime.now().millisecondsSinceEpoch}_$targetUserId';
 
+    debugPrint('[CALL] startCall: calling $targetUserId ($currentCallType, ID: $currentCallId)');
     _setCallState(CallState.outgoing);
+    _playRingtone();
 
     try {
       await _createPeerConnection();
@@ -215,14 +241,13 @@ class WebRTCService {
         'offer': {'sdp': offer.sdp, 'type': offer.type},
       });
 
-      _setCallState(CallState.ringing);
-
       // 30-second ringing timeout for missed call
       _ringingTimer?.cancel();
       _ringingTimer = Timer(const Duration(seconds: 30), () {
         if (callState == CallState.outgoing ||
             callState == CallState.ringing ||
             callState == CallState.connecting) {
+          debugPrint('[CALL] Ringing timeout reached (30s)');
           _socket.emit('cancel_call', {
             'targetUserId': targetUserId,
             'callId': currentCallId,
@@ -252,6 +277,7 @@ class WebRTCService {
     currentCallType = isVideo ? 'video' : 'audio';
     currentCallId = offerData['callId'] as String? ?? currentCallId;
 
+    debugPrint('[CALL] acceptCall: answering $callerId ($currentCallType, ID: $currentCallId)');
     _setCallState(CallState.connecting);
 
     try {
@@ -279,6 +305,7 @@ class WebRTCService {
   }
 
   void rejectCall(String callerId) {
+    debugPrint('[CALL] rejectCall: declining call from $callerId');
     _ringingTimer?.cancel();
     _stopRingtone();
     _socket.emit('reject_call', {
@@ -290,6 +317,7 @@ class WebRTCService {
   }
 
   void endCall() {
+    debugPrint('[CALL] endCall initiated (currentState: $callState)');
     _ringingTimer?.cancel();
     _stopRingtone();
     if (currentTargetUserId != null) {

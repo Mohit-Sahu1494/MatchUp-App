@@ -1,44 +1,58 @@
 import 'dart:async';
 import 'dart:io' show HttpClient;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 
 class ApiEndpoints {
   // Configured default host:
-  // 127.0.0.1 (Phone over USB via adb reverse & Windows/Desktop)
-  // 10.93.161.60 (Phone over Wi-Fi LAN)
-  // 10.0.2.2 (Android QEMU emulator)
-  // localhost (Web & iOS Simulator)
-  // https://app-production-86ea.up.railway.app
-  static String activeHost = 'https://appserver-production-0949.up.railway.app';
-//https://appserver-production-0949.up.railway.app/
-  static String get host => activeHost;
-  static String get baseUrl => '$activeHost/api';
-  static String get socketUrl => activeHost;
+  // Production: https://appserver-production-0949.up.railway.app
+  // Configurable via --dart-define=BACKEND_URL=...
+  static const String _defaultHost = String.fromEnvironment(
+    'BACKEND_URL',
+    defaultValue: 'https://appserver-production-0949.up.railway.app',
+  );
 
-  /// Automatically tests candidate hosts in parallel and selects the fastest responding one
+  static String _sanitize(String url) {
+    var trimmed = url.trim();
+    while (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
+  }
+
+  static String activeHost = _sanitize(_defaultHost);
+
+  static String get host => activeHost;
+  static String get baseUrl => '${_sanitize(activeHost)}/api';
+  static String get socketUrl => _sanitize(activeHost);
+
+  /// Automatically tests candidate hosts if running locally in debug mode
   static Future<String> autoDetectWorkingHost() async {
-    if (kIsWeb) {
-      activeHost = 'https://appserver-production-0949.up.railway.app';
+    if (kIsWeb || kReleaseMode) {
+      activeHost = _sanitize(_defaultHost);
+      return activeHost;
+    }
+
+    // In debug mode, if explicit BACKEND_URL wasn't provided, check local fallbacks
+    if (_defaultHost != 'https://appserver-production-0949.up.railway.app') {
+      activeHost = _sanitize(_defaultHost);
       return activeHost;
     }
 
     final candidates = [
-      'http://127.0.0.1:5000',
-      'http://10.93.161.60:5000',
       'http://10.0.2.2:5000',
-      'http://localhost:5000',
-      'https://appserver-production-0949.up.railway.app/'
+      'http://127.0.0.1:5000',
+      'https://appserver-production-0949.up.railway.app',
     ];
 
     for (final candidate in candidates) {
       try {
         final client = HttpClient()
-          ..connectionTimeout = const Duration(milliseconds: 1200);
+          ..connectionTimeout = const Duration(milliseconds: 900);
         final uri = Uri.parse('$candidate/api/health');
         final req = await client.getUrl(uri);
         final resp = await req.close();
         if (resp.statusCode == 200) {
-          activeHost = candidate;
+          activeHost = _sanitize(candidate);
           client.close();
           return activeHost;
         }
@@ -48,6 +62,7 @@ class ApiEndpoints {
       }
     }
 
+    activeHost = _sanitize(_defaultHost);
     return activeHost;
   }
 
@@ -60,6 +75,7 @@ class ApiEndpoints {
   static const String verifyEmail = '/auth/verify-email';
   static const String resendOtp = '/auth/resend-otp';
   static const String forgotPassword = '/auth/forgot-password';
+  static const String verifyResetOtp = '/auth/verify-reset-otp';
   static const String resetPassword = '/auth/reset-password';
   static const String logout = '/auth/logout';
   static const String deleteAccount = '/auth/delete-account';
