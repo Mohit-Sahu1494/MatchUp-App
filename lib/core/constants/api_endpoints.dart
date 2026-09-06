@@ -81,6 +81,9 @@ class ApiEndpoints {
   static const String deleteAccount = '/auth/delete-account';
   static const String uploadAvatar = '/auth/upload-avatar';
 
+  // In-App Update Check
+  static const String appVersion = '/app/version';
+
   // Profile & User
   static const String me = '/users/me';
   static const String updatePrivacy = '/users/me/privacy';

@@ -5,6 +5,7 @@ import 'core/theme/theme_provider.dart';
 import 'core/storage/token_storage.dart';
 import 'core/network/socket_service.dart';
 import 'core/constants/api_endpoints.dart';
+import 'core/services/update_service.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'navigation/main_bottom_nav.dart';
 
@@ -46,6 +47,15 @@ class _MatchUpAppState extends ConsumerState<MatchUpApp> {
         _isCheckingAuth = false;
       });
     }
+
+    // Check for app updates after auth is resolved.
+    // Uses addPostFrameCallback so the widget tree is fully built and
+    // the context is safe to use for showing a dialog.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        UpdateService.checkForUpdate(context);
+      }
+    });
   }
 
   @override
