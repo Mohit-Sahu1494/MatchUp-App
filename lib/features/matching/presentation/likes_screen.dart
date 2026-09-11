@@ -312,17 +312,18 @@ class _LikesScreenState extends State<LikesScreen> {
   }
 
   String _formatMessageTime(DateTime time) {
+    final localTime = time.toLocal();
     final now = DateTime.now();
-    final difference = now.difference(time);
+    final difference = now.difference(localTime);
 
-    if (difference.inDays == 0 && now.day == time.day) {
-      return DateFormat('h:mm a').format(time);
-    } else if (difference.inDays < 2 && (now.day - time.day == 1)) {
+    if (difference.inDays == 0 && now.day == localTime.day) {
+      return DateFormat('h:mm a').format(localTime);
+    } else if (difference.inDays < 2 && (now.day - localTime.day == 1)) {
       return 'Yesterday';
     } else if (difference.inDays < 7) {
-      return DateFormat('EEE').format(time);
+      return DateFormat('EEE').format(localTime);
     } else {
-      return DateFormat('MMM d').format(time);
+      return DateFormat('MMM d').format(localTime);
     }
   }
 

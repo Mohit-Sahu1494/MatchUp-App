@@ -56,9 +56,14 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
     if (!mounted || data == null) return;
     try {
       final msgMap = Map<String, dynamic>.from(data);
-      final msgId = msgMap['id'] ?? msgMap['_id'];
+      final msgId = (msgMap['id'] ?? msgMap['_id'])?.toString();
+      final sender = msgMap['sender'] ?? {};
+      final senderId = (sender['id'] ?? msgMap['senderId'])?.toString();
+      if (_myUserId != null && senderId == _myUserId) {
+        msgMap['isMine'] = true;
+      }
       setState(() {
-        final existingIndex = _messages.indexWhere((m) => (m['id'] ?? m['_id']) == msgId);
+        final existingIndex = _messages.indexWhere((m) => (m['id'] ?? m['_id'])?.toString() == msgId);
         if (existingIndex != -1) {
           _messages[existingIndex] = msgMap;
         } else {
@@ -74,10 +79,10 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
   void _handleGlobalMessageDeleted(dynamic data) {
     if (!mounted || data == null) return;
     try {
-      final msgId = data['messageId'];
+      final msgId = data['messageId']?.toString();
       if (msgId != null) {
         setState(() {
-          _messages.removeWhere((m) => (m['id'] ?? m['_id']) == msgId);
+          _messages.removeWhere((m) => (m['id'] ?? m['_id'])?.toString() == msgId);
         });
       }
     } catch (e) {
@@ -88,11 +93,11 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
   void _handleGlobalMessageEdited(dynamic data) {
     if (!mounted || data == null) return;
     try {
-      final msgId = data['messageId'];
+      final msgId = data['messageId']?.toString();
       final newText = data['text'];
       if (msgId != null && newText != null) {
         setState(() {
-          final idx = _messages.indexWhere((m) => (m['id'] ?? m['_id']) == msgId);
+          final idx = _messages.indexWhere((m) => (m['id'] ?? m['_id'])?.toString() == msgId);
           if (idx != -1) {
             _messages[idx] = {
               ..._messages[idx],
@@ -149,9 +154,11 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
       final res = await ApiClient().post(ApiEndpoints.globalChatMessages, data: body);
       if (res.data['success'] == true && res.data['data'] != null) {
         final sent = Map<String, dynamic>.from(res.data['data']);
-        final sentId = sent['id'] ?? sent['_id'];
+        sent['isMine'] = true;
+        sent['createdAt'] ??= DateTime.now().toUtc().toIso8601String();
+        final sentId = (sent['id'] ?? sent['_id'])?.toString();
         setState(() {
-          if (!_messages.any((m) => (m['id'] ?? m['_id']) == sentId)) {
+          if (!_messages.any((m) => (m['id'] ?? m['_id'])?.toString() == sentId)) {
             _messages.add(sent);
           }
           _replyingTo = null;
@@ -186,7 +193,7 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
       );
       if (res.data['success'] == true) {
         setState(() {
-          final idx = _messages.indexWhere((m) => (m['id'] ?? m['_id']) == prevEditId);
+          final idx = _messages.indexWhere((m) => (m['id'] ?? m['_id'])?.toString() == prevEditId?.toString());
           if (idx != -1) {
             _messages[idx] = {
               ..._messages[idx],
@@ -232,10 +239,12 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
     if (confirm != true) return;
 
     try {
-      await ApiClient().delete(ApiEndpoints.globalChatMessage(msgId));
-      setState(() {
-        _messages.removeWhere((m) => (m['id'] ?? m['_id']) == msgId);
-      });
+      final res = await ApiClient().delete(ApiEndpoints.globalChatMessage(msgId));
+      if (res.statusCode == 200 || res.data?['success'] == true) {
+        setState(() {
+          _messages.removeWhere((m) => (m['id'] ?? m['_id'])?.toString() == msgId);
+        });
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -546,8 +555,14 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
           : AppColors.primary.withOpacity(0.07),
       child: Row(
         children: [
-          Container(width: 3, height: 36, color: AppColors.primary,
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 3,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -586,8 +601,14 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
           : Colors.orange.withOpacity(0.07),
       child: Row(
         children: [
-          Container(width: 3, height: 36, color: Colors.orange,
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(2))),
+          Container(
+            width: 3,
+            height: 36,
+            decoration: BoxDecoration(
+              color: Colors.orange,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
           const SizedBox(width: 10),
           const Icon(Icons.edit_rounded, size: 16, color: Colors.orange),
           const SizedBox(width: 6),
@@ -624,28 +645,56 @@ class _GlobalChatScreenState extends State<GlobalChatScreen> {
       Map<String, dynamic> msg, Map<String, dynamic> sender, bool isMine, bool isDark) {
     DateTime? dt;
     if (msg['createdAt'] != null) {
-      dt = DateTime.tryParse(msg['createdAt'].toString());
+      if (msg['createdAt'] is DateTime) {
+        dt = (msg['createdAt'] as DateTime).toLocal();
+      } else {
+        dt = DateTime.tryParse(msg['createdAt'].toString())?.toLocal();
+      }
     }
-    final timeStr = dt != null ? DateFormat('hh:mm a').format(dt) : '';
+    dt ??= DateTime.now();
+
+    final now = DateTime.now();
+    final isToday = dt.year == now.year && dt.month == now.month && dt.day == now.day;
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday = dt.year == yesterday.year && dt.month == yesterday.month && dt.day == yesterday.day;
+
+    String timeStr;
+    if (isToday) {
+      timeStr = DateFormat('h:mm a').format(dt);
+    } else if (isYesterday) {
+      timeStr = 'Yesterday, ${DateFormat('h:mm a').format(dt)}';
+    } else {
+      timeStr = DateFormat('MMM d, h:mm a').format(dt);
+    }
     final isEdited = msg['isEdited'] == true;
 
     // Find quoted reply message if any
     final replyToRaw = msg['replyTo'];
     String? quotedText;
     String? quotedSender;
-    if (replyToRaw != null && replyToRaw is Map) {
-      quotedText = replyToRaw['text'] as String?;
-      final replyToId = replyToRaw['senderId'];
-      // Try to find sender name from loaded messages
-      if (replyToId != null) {
+    if (replyToRaw != null) {
+      if (replyToRaw is Map) {
+        quotedText = replyToRaw['text'] as String?;
+        final replyToId = replyToRaw['senderId'];
+        if (replyToId != null) {
+          final found = _messages.firstWhere(
+            (m) {
+              final s = m['sender'];
+              return s != null && ((s['id'] ?? s['_id'])?.toString() == replyToId.toString());
+            },
+            orElse: () => {},
+          );
+          quotedSender = found.isNotEmpty ? (found['sender']?['name'] ?? 'Student') : 'Student';
+        }
+      } else {
         final found = _messages.firstWhere(
-          (m) {
-            final s = m['sender'];
-            return s != null && (s['id']?.toString() == replyToId.toString());
-          },
+          (m) => (m['id'] ?? m['_id'])?.toString() == replyToRaw.toString(),
           orElse: () => {},
         );
-        quotedSender = found.isNotEmpty ? (found['sender']?['name'] ?? 'Student') : 'Student';
+        if (found.isNotEmpty) {
+          quotedText = found['text'] as String?;
+          quotedSender = found['sender']?['name'] ?? 'Student';
+        }
       }
     }
 

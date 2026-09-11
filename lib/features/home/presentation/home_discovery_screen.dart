@@ -31,7 +31,8 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
   int _currentIndex = 0;
   String? _todayMood;
   int _unreadNotificationCount = 0;
-  final Set<String> _swipedUserIds = {};
+  final Set<String> _likedUserIds = {};
+  final Set<String> _passedUserIds = {};
   final SocketService _socket = SocketService();
 
   // Swipe animation state
@@ -101,7 +102,9 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
 
   Future<void> _fetchFeed({bool isRefresh = false}) async {
     if (isRefresh) {
-      _swipedUserIds.clear();
+      // On manual refresh, clear passed IDs for cycling if desired,
+      // but NEVER clear liked profiles — liked profiles are permanently excluded!
+      _passedUserIds.clear();
     }
     setState(() {
       _isLoading = true;
@@ -112,18 +115,24 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       final res = await ApiClient().get(ApiEndpoints.discoveryFeed);
       if (res.data['success'] == true) {
         final List list = res.data['data']['profiles'] ?? [];
-        List<ProfileModel> parsed = list
-            .map((item) => ProfileModel.fromJson(item))
-            .where((p) =>
-                !_swipedUserIds.contains(p.userId) &&
-                !_swipedUserIds.contains(p.id))
-            .toList();
+        final List<ProfileModel> parsed = [];
+        final Set<String> seenInBatch = {};
 
-        // Small user pool fallback: If all server candidates were in local swiped set,
-        // clear local history so profiles repeat and screen doesn't stay empty
-        if (parsed.isEmpty && list.isNotEmpty) {
-          _swipedUserIds.clear();
-          parsed = list.map((item) => ProfileModel.fromJson(item)).toList();
+        for (final item in list) {
+          if (item is Map) {
+            final p = ProfileModel.fromJson(Map<String, dynamic>.from(item));
+            final uid = p.userId.isNotEmpty ? p.userId : p.id;
+            // Strict defensive filtering:
+            // 1. Liked profiles must NEVER appear again
+            // 2. Prevent duplicate profile IDs in the current feed
+            final isLiked = _likedUserIds.contains(uid) ||
+                (p.userId.isNotEmpty && _likedUserIds.contains(p.userId)) ||
+                (p.id.isNotEmpty && _likedUserIds.contains(p.id));
+            if (!isLiked && uid.isNotEmpty && !seenInBatch.contains(uid)) {
+              seenInBatch.add(uid);
+              parsed.add(p);
+            }
+          }
         }
 
         setState(() {
@@ -173,8 +182,13 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
     });
 
     final targetId = target.userId.isNotEmpty ? target.userId : target.id;
-    if (target.userId.isNotEmpty) _swipedUserIds.add(target.userId);
-    if (target.id.isNotEmpty) _swipedUserIds.add(target.id);
+    if (action == 'like') {
+      if (target.userId.isNotEmpty) _likedUserIds.add(target.userId);
+      if (target.id.isNotEmpty) _likedUserIds.add(target.id);
+    } else {
+      if (target.userId.isNotEmpty) _passedUserIds.add(target.userId);
+      if (target.id.isNotEmpty) _passedUserIds.add(target.id);
+    }
 
     try {
       final res = await ApiClient().post(ApiEndpoints.swipe, data: {
@@ -189,6 +203,11 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       }
     } catch (e) {
       debugPrint('[Swipe Error] $e');
+    }
+
+    // If cards exhausted, refetch feed
+    if (_currentIndex >= _profiles.length && mounted) {
+      _fetchFeed();
     }
   }
 

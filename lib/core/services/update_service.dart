@@ -6,34 +6,64 @@ import '../constants/api_endpoints.dart';
 
 /// In-App Update Service
 /// ─────────────────────────────────────────────────────────────────
-/// Checks the production backend for the latest app version and
-/// shows an update dialog if a newer build is available.
+/// Checks the backend for the latest app version and
+/// shows a clean MatchUp update dialog if a newer version is available.
 ///
-/// Usage (called once during app startup from main.dart):
-///   await UpdateService.checkForUpdate(context);
-///
-/// • Uses buildNumber as the primary comparison key.
-/// • API failure is silently swallowed — the app continues normally.
-/// • A single-launch guard prevents duplicate dialogs.
+/// Features:
+/// • Semantic numeric version comparison (e.g. 1.10.0 > 1.9.0)
+/// • Build number fallback comparison
+/// • Minimum supported version detection with mandatory force update
+/// • Optional vs forced update flows (blocking dismissal when forced)
+/// • Trusted official distribution URL launching
+/// • Network error resilience
 /// ─────────────────────────────────────────────────────────────────
 class UpdateService {
-  UpdateService._(); // static-only class
+  UpdateService._();
 
   static bool _dialogShown = false;
 
-  /// Call this once at startup (inside the splash screen / auth check).
+  /// Compares semantic versions v1 and v2 numerically.
+  /// Returns:
+  ///   < 0 if v1 < v2 (v1 is older)
+  ///   0   if v1 == v2
+  ///   > 0 if v1 > v2 (v1 is newer)
+  static int compareSemVer(String v1, String v2) {
+    if (v1.isEmpty && v2.isEmpty) return 0;
+    if (v1.isEmpty) return -1;
+    if (v2.isEmpty) return 1;
+
+    final clean1 = v1.trim().replaceFirst(RegExp(r'^[vV]'), '').split('+').first;
+    final clean2 = v2.trim().replaceFirst(RegExp(r'^[vV]'), '').split('+').first;
+
+    final parts1 = clean1.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+    final parts2 = clean2.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+
+    while (parts1.length < 3) {
+      parts1.add(0);
+    }
+    while (parts2.length < 3) {
+      parts2.add(0);
+    }
+
+    for (int i = 0; i < 3; i++) {
+      if (parts1[i] < parts2[i]) return -1;
+      if (parts1[i] > parts2[i]) return 1;
+    }
+    return 0;
+  }
+
+  /// Call this at startup or login.
   /// [context] must be a mounted BuildContext.
-  static Future<void> checkForUpdate(BuildContext context) async {
-    if (_dialogShown) return; // never show twice per launch
+  static Future<void> checkForUpdate(BuildContext context, {bool forceCheck = false}) async {
+    if (_dialogShown && !forceCheck) return;
 
     try {
-      // 1. Read the installed build number
+      // 1. Read installed version information from package_info_plus
       final info = await PackageInfo.fromPlatform();
+      final installedVersion = info.version;
       final installedBuild = int.tryParse(info.buildNumber) ?? 0;
 
-      // 2. Fetch latest version from backend (5-second timeout)
-      // Use a plain Dio instance — /app/version is a public endpoint
-      // that does not require authentication.
+      // 2. Fetch server version info (public endpoint)
       final dio = Dio(BaseOptions(
         baseUrl: ApiEndpoints.baseUrl,
         connectTimeout: const Duration(seconds: 5),
@@ -44,51 +74,74 @@ class UpdateService {
       if (response.data == null || response.data['success'] != true) return;
 
       final data = response.data['data'];
-      if (data == null) return;
+      if (data == null || data is! Map) return;
 
-      final serverBuild  = (data['buildNumber'] as num?)?.toInt() ?? 0;
-      final serverVer    = (data['version']     as String?) ?? '';
-      final downloadUrl  = (data['downloadUrl'] as String?) ?? '';
-      final forceUpdate  = (data['forceUpdate'] as bool?)   ?? false;
-      final updateMsg    = (data['updateMessage'] as String?)
-          ?? 'A new version of MatchUp is available.';
+      final serverLatestVer = (data['latestVersion'] ?? data['version'] ?? '').toString();
+      final serverMinVer = (data['minimumVersion'] ?? data['minimumSupportedVersion'] ?? '').toString();
+      final serverBuild = (data['buildNumber'] as num?)?.toInt() ?? 0;
+      final downloadUrl = (data['updateUrl'] ?? data['downloadUrl'] ?? '').toString();
+      final serverForceUpdate = data['forceUpdate'] == true;
+      final updateMsg = (data['message'] ?? data['updateMessage'] ?? 'A new version of MatchUp is available with improvements and bug fixes.').toString();
 
-      // 3. Compare build numbers
-      if (serverBuild <= installedBuild) return; // already up-to-date
-      if (downloadUrl.isEmpty) return;           // nothing to download
+      if (downloadUrl.isEmpty) return;
 
-      // 4. Show the update dialog
+      // 3. Semantic version comparison
+      bool isOutdated = false;
+      bool mustForce = serverForceUpdate;
+
+      // Check against minimum supported version
+      if (serverMinVer.isNotEmpty && compareSemVer(installedVersion, serverMinVer) < 0) {
+        isOutdated = true;
+        mustForce = true;
+      }
+
+      // Check against latest available version
+      if (serverLatestVer.isNotEmpty) {
+        final semVerDiff = compareSemVer(installedVersion, serverLatestVer);
+        if (semVerDiff < 0) {
+          isOutdated = true;
+        } else if (semVerDiff == 0 && serverBuild > installedBuild) {
+          // Build number fallback if semver is identical
+          isOutdated = true;
+        }
+      } else if (serverBuild > installedBuild) {
+        isOutdated = true;
+      }
+
+      if (!isOutdated) return;
+
+      // 4. Present update dialog
       if (context.mounted) {
         _dialogShown = true;
         await _showUpdateDialog(
           context,
-          serverVersion: serverVer,
+          serverVersion: serverLatestVer.isNotEmpty ? serverLatestVer : 'Latest',
+          installedVersion: installedVersion,
           downloadUrl: downloadUrl,
-          forceUpdate: forceUpdate,
+          forceUpdate: mustForce,
           updateMessage: updateMsg,
         );
       }
     } on DioException catch (e) {
-      // Network / timeout errors → silently continue
-      debugPrint('[UpdateService] Version check failed: ${e.message}');
+      debugPrint('[UpdateService] Version check network issue: ${e.message}');
     } catch (e) {
-      debugPrint('[UpdateService] Unexpected error: $e');
+      debugPrint('[UpdateService] Version check error: $e');
     }
   }
 
   static Future<void> _showUpdateDialog(
     BuildContext context, {
     required String serverVersion,
+    required String installedVersion,
     required String downloadUrl,
     required bool forceUpdate,
     required String updateMessage,
   }) async {
     return showDialog<void>(
       context: context,
-      barrierDismissible: false, // always block dismiss via tap-outside
-      builder: (ctx) => WillPopScope(
-        // Back-button behaviour: only dismissible for optional updates
-        onWillPop: () async => !forceUpdate,
+      barrierDismissible: !forceUpdate,
+      builder: (ctx) => PopScope(
+        canPop: !forceUpdate,
         child: AlertDialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -98,11 +151,13 @@ class UpdateService {
               const Icon(Icons.system_update_rounded,
                   color: Color(0xFFEC407A), size: 26),
               const SizedBox(width: 10),
-              Text(
-                forceUpdate ? 'Update Required' : 'New Update Available',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 18,
+              Expanded(
+                child: Text(
+                  forceUpdate ? 'Update Required' : 'New Update Available',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                  ),
                 ),
               ),
             ],
@@ -116,23 +171,45 @@ class UpdateService {
                 style: const TextStyle(fontSize: 14, height: 1.5),
               ),
               const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEC407A).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                      color: const Color(0xFFEC407A).withOpacity(0.3)),
-                ),
-                child: Text(
-                  'Version $serverVersion',
-                  style: const TextStyle(
-                    color: Color(0xFFEC407A),
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      'Installed: v$installedVersion',
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 12,
+                      ),
+                    ),
                   ),
-                ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEC407A).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                          color: const Color(0xFFEC407A).withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      'Latest: v$serverVersion',
+                      style: const TextStyle(
+                        color: Color(0xFFEC407A),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               if (forceUpdate) ...[
                 const SizedBox(height: 12),
@@ -162,10 +239,11 @@ class UpdateService {
             ],
           ),
           actions: [
-            // "Later" only shown for optional (non-force) updates
             if (!forceUpdate)
               TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                },
                 child: const Text('Later',
                     style: TextStyle(color: Colors.grey)),
               ),

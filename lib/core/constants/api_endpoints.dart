@@ -8,7 +8,7 @@ class ApiEndpoints {
   // Configurable via --dart-define=BACKEND_URL=...
   static const String _defaultHost = String.fromEnvironment(
     'BACKEND_URL',
-    defaultValue: 'https://appserver-production-0949.up.railway.app',
+    defaultValue: 'http://localhost:5000',
   );
 
   static String _sanitize(String url) {
@@ -33,11 +33,11 @@ class ApiEndpoints {
     }
 
     // In debug mode, if explicit BACKEND_URL wasn't provided, check local fallbacks
-    if (_defaultHost != 'https://appserver-production-0949.up.railway.app') {
+    if (_defaultHost != 'http://localhost:5000') {
       activeHost = _sanitize(_defaultHost);
       return activeHost;
     }
-
+// https://appserver-production-0949.up.railway.app
     final candidates = [
       'http://10.0.2.2:5000',
       'http://127.0.0.1:5000',
@@ -112,6 +112,10 @@ class ApiEndpoints {
   static String chatMessages(String conversationId) =>
       '/chats/$conversationId/messages';
   static const String sendMessage = '/chats/messages';
+  static String messageReactions(String messageId) =>
+      '/chats/messages/$messageId/reactions';
+  static String messageForward(String messageId) =>
+      '/chats/messages/$messageId/forward';
   static const String chatUpload = '/chats/upload';
   static const String globalChatMessages = '/global-chat/messages';
   static String globalChatMessage(String id) => '/global-chat/messages/$id';

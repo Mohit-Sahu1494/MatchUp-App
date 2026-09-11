@@ -76,6 +76,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       _socket.on('message_received', _handleIncomingMessage);
       _socket.on('message_edited', _handleMessageEdited);
       _socket.on('message_deleted', _handleMessageDeleted);
+      _socket.on('message_reaction_updated', _handleMessageReactionUpdated);
       _socket.on('user_typing_start', _handleTypingStart);
       _socket.on('user_typing_stop', _handleTypingStop);
       _socket.on('typing_start', _handleTypingStart);
@@ -148,6 +149,52 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       }
     } catch (e) {
       debugPrint('[Chat] Error updating deleted message: $e');
+    }
+  }
+
+  void _handleMessageReactionUpdated(dynamic data) {
+    if (!mounted || data is! Map) return;
+    try {
+      final msgId = data['messageId']?.toString();
+      final convId = data['conversationId']?.toString();
+      if (convId == widget.conversationId && msgId != null) {
+        final index = _messages.indexWhere((m) => m.id == msgId);
+        if (index != -1) {
+          final List<MessageReaction> reactions = [];
+          if (data['reactions'] is List) {
+            for (final r in data['reactions']) {
+              if (r is Map) {
+                reactions.add(MessageReaction.fromJson(Map<String, dynamic>.from(r)));
+              }
+            }
+          }
+          final Map<String, int> summary = {};
+          if (data['reactionsSummary'] is Map) {
+            (data['reactionsSummary'] as Map).forEach((k, v) {
+              summary[k.toString()] = int.tryParse(v.toString()) ?? 0;
+            });
+          }
+          String? myReact = data['myReaction']?.toString();
+          if (myReact == null && _myUserId != null) {
+            for (final r in reactions) {
+              if (r.userId == _myUserId) {
+                myReact = r.emoji;
+                break;
+              }
+            }
+          }
+
+          setState(() {
+            _messages[index] = _messages[index].copyWith(
+              reactions: reactions,
+              reactionsSummary: summary,
+              myReaction: myReact,
+            );
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[Chat] Error updating reactions: $e');
     }
   }
 
@@ -508,16 +555,181 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     return fallback;
   }
 
+  Future<void> _handleReaction(MessageModel message, String emoji) async {
+    try {
+      final res = await ApiClient().post(
+        ApiEndpoints.messageReactions(message.id),
+        data: {'emoji': emoji},
+      );
+      if (res.data['success'] == true) {
+        final updated = MessageModel.fromJson(
+          res.data['data'],
+          currentUserId: _myUserId,
+        );
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == message.id);
+          if (index != -1) {
+            _messages[index] = updated;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[Chat] Error sending reaction: $e');
+    }
+  }
+
+  Future<void> _handleForwardMessage(MessageModel message) async {
+    try {
+      final res = await ApiClient().get(ApiEndpoints.chats);
+      if (res.data['success'] != true || !mounted) return;
+
+      final List list = res.data['data'] ?? [];
+      final conversations = list
+          .map((c) => ConversationModel.fromJson(Map<String, dynamic>.from(c)))
+          .where((c) => c.id != widget.conversationId)
+          .toList();
+
+      if (conversations.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No other conversations available to forward to')),
+          );
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      final selectedConv = await showModalBottomSheet<ConversationModel>(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.forward_rounded, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    Text('Forward message to...', style: AppTypography.displayMedium.copyWith(fontSize: 16)),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.45),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: conversations.length,
+                  itemBuilder: (ctx, i) {
+                    final conv = conversations[i];
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundImage: conv.recipientPhoto.isNotEmpty
+                            ? CachedNetworkImageProvider(conv.recipientPhoto)
+                            : null,
+                        child: conv.recipientPhoto.isEmpty ? Text(conv.recipientName.isNotEmpty ? conv.recipientName[0] : 'S') : null,
+                      ),
+                      title: Text(conv.recipientName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Text(conv.lastMessageText, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      trailing: const Icon(Icons.send_rounded, color: AppColors.primary, size: 20),
+                      onTap: () => Navigator.pop(ctx, conv),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (selectedConv == null || !mounted) return;
+
+      final fwdRes = await ApiClient().post(
+        ApiEndpoints.messageForward(message.id),
+        data: {'targetConversationId': selectedConv.id},
+      );
+
+      if (fwdRes.data['success'] == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Message forwarded to ${selectedConv.recipientName}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_apiErrorMessage(e, 'Failed to forward message'))),
+        );
+      }
+    }
+  }
+
+  void _scrollToMessage(String messageId) {
+    final index = _messages.indexWhere((m) => m.id == messageId);
+    if (index != -1 && _scrollController.hasClients) {
+      final total = _messages.length;
+      final target = (_scrollController.position.maxScrollExtent / (total > 1 ? total - 1 : 1)) * index;
+      _scrollController.animateTo(
+        target.clamp(0.0, _scrollController.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Original message not found locally in this chat view')),
+      );
+    }
+  }
+
   void _showMessageOptions(MessageModel message) {
     final isMe = message.senderId == _myUserId || message.isMine;
     final isDeleted = message.isDeletedForEveryone;
 
     showModalBottomSheet(
       context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Emoji reaction quick-bar
+            if (!isDeleted) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: ['❤️', '👍', '😂', '😮', '😢', '🔥', '🎉'].map((emoji) {
+                    final isSelected = message.myReaction == emoji;
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _handleReaction(message, emoji);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppColors.primary.withOpacity(0.18) : Colors.transparent,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isSelected ? AppColors.primary : Colors.transparent,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const Divider(height: 1),
+            ],
+
             if (!isDeleted) ...[
               ListTile(
                 leading: const Icon(Icons.reply, color: AppColors.primary),
@@ -525,6 +737,14 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 onTap: () {
                   Navigator.pop(ctx);
                   setState(() => _replyingTo = message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.forward_rounded, color: AppColors.primary),
+                title: const Text('Forward'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _handleForwardMessage(message);
                 },
               ),
               ListTile(
@@ -600,6 +820,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       _socket.off('message_received', _handleIncomingMessage);
       _socket.off('message_edited', _handleMessageEdited);
       _socket.off('message_deleted', _handleMessageDeleted);
+      _socket.off('message_reaction_updated', _handleMessageReactionUpdated);
       _socket.off('user_typing_start', _handleTypingStart);
       _socket.off('user_typing_stop', _handleTypingStop);
       _socket.off('typing_start', _handleTypingStart);
@@ -860,7 +1081,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: Column(
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
         constraints:
             BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
@@ -890,6 +1115,33 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             crossAxisAlignment:
                 isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
+              // ── FORWARDED header ─────────────────────────────────────
+              if (msg.isForwarded && !isDeleted)
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, right: 12, top: 6, bottom: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Transform(
+                        alignment: Alignment.center,
+                        transform: Matrix4.rotationY(3.14159),
+                        child: Icon(Icons.reply, size: 13, color: isMe ? Colors.white70 : Colors.grey[600]),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        msg.forwardedFrom?.originalSenderName.isNotEmpty == true
+                            ? 'Forwarded from ${msg.forwardedFrom!.originalSenderName}'
+                            : 'Forwarded',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                          color: isMe ? Colors.white70 : Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               // ── IMAGE bubble ──────────────────────────────────────────
               if (hasMedia && isImageMsg)
                 GestureDetector(
@@ -1019,25 +1271,47 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                   crossAxisAlignment:
                       isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                   children: [
-                    // Quoted Reply Preview inside bubble
+                    // Quoted Reply Preview inside bubble (tap to scroll to original)
                     if (msg.replyTo != null && !isDeleted) ...[
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: isMe
-                              ? Colors.black.withOpacity(0.15)
-                              : Colors.black.withOpacity(0.06),
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Text(
-                          msg.replyTo!.text,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontStyle: FontStyle.italic,
-                            color: isMe ? Colors.white70 : Colors.black87,
+                      GestureDetector(
+                        onTap: () => _scrollToMessage(msg.replyTo!.id),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: isMe
+                                ? Colors.black.withOpacity(0.15)
+                                : Colors.black.withOpacity(0.06),
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            border: Border(
+                              left: BorderSide(
+                                color: isMe ? Colors.white70 : AppColors.primary,
+                                width: 3,
+                              ),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                msg.replyTo!.senderId == _myUserId ? 'You' : widget.recipientName,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: isMe ? Colors.white : AppColors.primary,
+                                ),
+                              ),
+                              Text(
+                                msg.replyTo!.text,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontStyle: FontStyle.italic,
+                                  color: isMe ? Colors.white70 : Colors.black87,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -1087,7 +1361,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                           ),
                         ],
                         Text(
-                          DateFormat('hh:mm a').format(msg.createdAt),
+                          DateFormat('hh:mm a').format(msg.createdAt.toLocal()),
                           style: TextStyle(
                             fontSize: 10,
                             color: isMe ? Colors.white70 : Colors.grey,
@@ -1112,7 +1386,53 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           ),
         ),
       ),
-    );
+
+      // ── REACTION BADGES BELOW BUBBLE ──────────────────────────────
+      if (msg.reactionsSummary.isNotEmpty && !isDeleted)
+        Padding(
+          padding: const EdgeInsets.only(left: 4, right: 4, bottom: 4),
+          child: Wrap(
+            spacing: 4,
+            runSpacing: 2,
+            children: msg.reactionsSummary.entries.map((entry) {
+              final isMyReaction = msg.myReaction == entry.key;
+              return GestureDetector(
+                onTap: () => _handleReaction(msg, entry.key),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: isMyReaction
+                        ? AppColors.primary.withOpacity(0.18)
+                        : (isDark ? Colors.grey[800] : Colors.grey[200]),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isMyReaction
+                          ? AppColors.primary
+                          : Colors.transparent,
+                      width: 1,
+                    ),
+                  ),
+                  child: Text(
+                    '${entry.key} ${entry.value}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: isMyReaction
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                      color: isMyReaction
+                          ? AppColors.primary
+                          : (isDark ? Colors.white : Colors.black87),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+    ],
+  ),
+);
   }
 
   String _formatDuration(int seconds) {

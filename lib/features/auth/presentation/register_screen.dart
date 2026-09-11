@@ -38,8 +38,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _courseController = TextEditingController(text: 'Computer Science');
   int _selectedYear = 2;
 
-  final List<String> _selectedInterests = ['Coding', 'Music'];
-  final List<String> _selectedHobbies = ['Gaming', 'Chess'];
+  final List<String> _selectedInterests = ['Coding', 'Music & Concerts'];
+  final List<String> _selectedHobbies = ['Video Gaming', 'Chess'];
   final List<String> _selectedRelationships = ['Dating'];
 
   final _bioController = TextEditingController();
@@ -48,6 +48,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isLoading = false;
   String? _errorMessage;
   String? _registrationToken;
+  String? _verifiedEmail;
+  String? _verifiedUsername;
 
   @override
   void dispose() {
@@ -108,10 +110,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _nextStep() async {
     if (!_validateCurrentStep()) return;
     if (_currentStep == 0) {
-      if (_registrationToken != null) {
+      final currentEmail = _emailController.text.trim().toLowerCase();
+      final currentUsername = _usernameController.text.trim().toLowerCase();
+      if (_registrationToken != null &&
+          _verifiedEmail == currentEmail &&
+          _verifiedUsername == currentUsername) {
         setState(() => _currentStep = 1);
         return;
       }
+      _registrationToken = null;
       await _verifyFirstStepEmail();
       return;
     }
@@ -147,6 +154,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (token != null && mounted) {
         setState(() {
           _registrationToken = token;
+          _verifiedEmail = _emailController.text.trim().toLowerCase();
+          _verifiedUsername = _usernameController.text.trim().toLowerCase();
           _currentStep = 1;
         });
       } else if (mounted) {
@@ -172,10 +181,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() {
         _errorMessage = null;
         _currentStep--;
-        if (_currentStep == 0) {
-          // If going back to credentials, clear old token so re-verification is required
-          _registrationToken = null;
-        }
       });
     } else {
       Navigator.pop(context);
