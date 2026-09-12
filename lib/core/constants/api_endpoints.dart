@@ -8,7 +8,7 @@ class ApiEndpoints {
   // Configurable via --dart-define=BACKEND_URL=...
   static const String _defaultHost = String.fromEnvironment(
     'BACKEND_URL',
-    defaultValue: 'http://localhost:5000',
+    defaultValue: 'https://appserver-production-0949.up.railway.app',
   );
 
   static String _sanitize(String url) {
@@ -33,7 +33,7 @@ class ApiEndpoints {
     }
 
     // In debug mode, if explicit BACKEND_URL wasn't provided, check local fallbacks
-    if (_defaultHost != 'http://localhost:5000') {
+    if (_defaultHost != 'https://appserver-production-0949.up.railway.app') {
       activeHost = _sanitize(_defaultHost);
       return activeHost;
     }
