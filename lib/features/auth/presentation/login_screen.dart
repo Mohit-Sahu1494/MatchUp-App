@@ -13,6 +13,7 @@ import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import '../../../navigation/main_bottom_nav.dart';
 import 'verify_email_screen.dart';
+import '../../../core/services/fcm_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -48,6 +49,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
         // Ensure real-time socket connects with new credentials
         await SocketService().connect();
+        // Register FCM push device token
+        FcmService.registerDeviceToken();
 
         final reward = res.data['data']['reward'];
 

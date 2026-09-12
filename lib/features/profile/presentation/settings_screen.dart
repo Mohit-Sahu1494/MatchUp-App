@@ -12,6 +12,7 @@ import '../../auth/presentation/login_screen.dart';
 import 'privacy_settings_screen.dart';
 import 'blocked_users_screen.dart';
 import '../../home/presentation/daily_mood_dialog.dart';
+import '../../../core/services/fcm_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -72,6 +73,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (confirm != true) return;
 
     try {
+      await FcmService.unregisterDeviceToken();
       await ApiClient().post(ApiEndpoints.logout);
     } catch (_) {}
 

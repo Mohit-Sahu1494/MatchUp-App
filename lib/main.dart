@@ -6,16 +6,21 @@ import 'core/storage/token_storage.dart';
 import 'core/network/socket_service.dart';
 import 'core/constants/api_endpoints.dart';
 import 'core/services/update_service.dart';
+import 'core/services/fcm_service.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'navigation/main_bottom_nav.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ApiEndpoints.autoDetectWorkingHost();
+  await FcmService.initialize(navKey: MatchUpApp.navigatorKey);
   runApp(const ProviderScope(child: MatchUpApp()));
 }
 
 class MatchUpApp extends ConsumerStatefulWidget {
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
   const MatchUpApp({super.key});
 
   @override
@@ -37,6 +42,8 @@ class _MatchUpAppState extends ConsumerState<MatchUpApp> {
     if (token != null && token.isNotEmpty) {
       // Connect real-time socket gateway
       await SocketService().connect();
+      // Synchronize FCM push device token
+      FcmService.registerDeviceToken();
       setState(() {
         _isAuthenticated = true;
         _isCheckingAuth = false;
@@ -64,6 +71,7 @@ class _MatchUpAppState extends ConsumerState<MatchUpApp> {
 
     return MaterialApp(
       title: 'MatchUp',
+      navigatorKey: MatchUpApp.navigatorKey,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,

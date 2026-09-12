@@ -14,6 +14,7 @@ import '../../../core/widgets/avatar_image.dart';
 import '../../profile/presentation/edit_profile_screen.dart';
 import 'verify_email_screen.dart';
 import '../../../navigation/main_bottom_nav.dart';
+import '../../../core/services/fcm_service.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -224,6 +225,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         await TokenStorage.saveToken(token);
         await TokenStorage.saveUserId(userId.toString());
         await SocketService().connect();
+        FcmService.registerDeviceToken();
         if (mounted) {
           Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const MainBottomNav()),

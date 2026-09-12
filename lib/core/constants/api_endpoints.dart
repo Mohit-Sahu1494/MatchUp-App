@@ -137,4 +137,7 @@ class ApiEndpoints {
   static const String notifications = '/notifications';
   static const String notificationsMarkAllRead = '/notifications/mark-all-read';
   static const String notificationsReadAll = '/notifications/read-all';
+
+  // FCM Device Token
+  static const String updateFcmToken = '/fcm/token';
 }
